@@ -1,0 +1,46 @@
+{
+  "name": "geo-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "worker:publishing": "node --env-file-if-exists=.env.local scripts/publishing-worker.mjs",
+    "worker:detection": "node --env-file-if-exists=.env.local scripts/detection-worker.mjs",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "npm run test:e2e:real",
+    "test:e2e:mock": "node scripts/run-mock-e2e.mjs",
+    "test:e2e:real": "node --env-file-if-exists=.env.local node_modules/@playwright/test/cli.js test -c playwright.real.config.ts",
+    "test:acceptance": "npm run typecheck && npm run build && npm run test:e2e:real",
+    "user:provision": "node --env-file-if-exists=.env.local scripts/provision-internal-user.mjs",
+    "supabase:verify": "node --env-file-if-exists=.env.local scripts/verify-supabase-setup.mjs",
+    "supabase:verify-isolation": "node --env-file-if-exists=.env.local scripts/verify-supabase-isolation.mjs",
+    "supabase:verify-migrations": "node --env-file-if-exists=.env.local scripts/verify-migration-state.mjs",
+    "test": "node --test scripts/verify-migration-state.test.mjs"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.12.4",
+    "@supabase/supabase-js": "^2.111.0",
+    "echarts": "^6.1.0",
+    "lucide-react": "^1.25.0",
+    "next": "^16.2.10",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.2.10",
+    "postcss": "^8.5.20",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^6.0.3"
+  }
+}

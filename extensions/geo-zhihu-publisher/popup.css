@@ -1,0 +1,16 @@
+:root { color-scheme: light; font-family: system-ui, "Microsoft YaHei", sans-serif; }
+body { width: 340px; margin: 0; color: #101828; background: #f7f8fc; }
+main { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+header { display: flex; align-items: center; gap: 10px; }
+header div { display: flex; flex-direction: column; gap: 3px; }
+header small, p { color: #667085; font-size: 12px; line-height: 1.55; }
+.logo { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 10px; color: #fff; background: #056de8; font-weight: 700; }
+label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; }
+input { height: 38px; padding: 0 10px; border: 1px solid #d0d5dd; border-radius: 8px; outline: none; }
+input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgb(79 70 229 / 10%); }
+button { height: 38px; border: 0; border-radius: 8px; cursor: pointer; font-weight: 650; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+.primary { color: #fff; background: #4f46e5; }
+.secondary { color: #344054; border: 1px solid #d0d5dd; background: #fff; }
+#status { padding: 10px; border-radius: 8px; color: #475467; background: #eef2ff; font-size: 12px; line-height: 1.5; }
+p { margin: 0; }

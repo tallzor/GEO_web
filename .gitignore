@@ -1,0 +1,20 @@
+node_modules/
+.next/
+out/
+playwright-report/
+test-results/
+*.tsbuildinfo
+*.log
+.env*
+!.env.example
+.agents/
+documents/
+data/detection-jobs.json
+data/detection-jobs.*.tmp
+data/brand-research-tasks.json
+data/brand-research-tasks.*.tmp
+supabase/.temp/
+
+# 部署产物与运行时日志（由 scripts/deploy-prepare.sh 与 PM2 生成）
+deploy/
+logs/

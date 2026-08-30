@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GEO 知乎同步</title><link rel="stylesheet" href="popup.css"></head>
+  <body>
+    <main>
+      <header><span class="logo">知</span><div><strong>知乎草稿同步助手</strong><small>只保存草稿，不会自动发布</small></div></header>
+      <label>GEO网站地址<input id="baseUrl" type="url" placeholder="https://example.com"></label>
+      <label>扩展连接码<input id="token" type="password" placeholder="在发布平台配置页生成"></label>
+      <button id="save" class="secondary">保存配置</button>
+      <div id="status" role="status">请先填写网站地址和连接码</div>
+      <button id="sync" class="primary">领取并同步下一条</button>
+      <p>开始前请先登录知乎，并保持知乎创作中心页面可用。同步后请自行检查排版并手动发布。</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
