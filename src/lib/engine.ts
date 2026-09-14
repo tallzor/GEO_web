@@ -368,7 +368,7 @@ export function generateContent(brand: Brand, cycle: OptimizationCycle, taskId: 
   };
 }
 
-export function buildChannelVersions(title: string, body: string, brand: Brand): ChannelContent[] {
+function buildChannelVersions(title: string, body: string, brand: Brand): ChannelContent[] {
   return [
     { channel: "wechat", title: `${brand.name}新手体验课选择指南`, body: `# ${title}\n\n${body}` },
     { channel: "zhihu", title, body },

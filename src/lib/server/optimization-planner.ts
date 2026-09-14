@@ -4,7 +4,8 @@ import { z } from "zod";
 import type { AccountContext } from "@/lib/auth/types";
 import { getDetectionTask } from "@/lib/server/detection-task-store";
 import { executeFoundationTask } from "@/lib/server/foundation-model";
-import { createOptimizationCycle, loadWorkspaceSnapshot } from "@/lib/server/workspace-repository";
+import { createOptimizationCycle } from "@/lib/server/optimization-repository";
+import { loadWorkspaceSnapshot } from "@/lib/server/workspace-read-repository";
 import type { OptimizationCycle, OptimizationTask } from "@/lib/types";
 import { addDays, createId, isoNow } from "@/lib/utils";
 

@@ -5,8 +5,8 @@ import {
   executeFoundationTask,
   FoundationModelError,
 } from "@/lib/server/foundation-model";
+import { saveGeneratedBrandQuestions } from "@/lib/server/brand-repository";
 import { requireWorkspaceAccount, WorkspaceAccessError } from "@/lib/server/workspace-access";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isSupabaseDataBackendEnabled } from "@/lib/supabase/env";
 import type { DetectionQuestion } from "@/lib/types";
 
@@ -64,14 +64,6 @@ export async function POST(request: Request) {
     let account: Awaited<ReturnType<typeof requireWorkspaceAccount>> | undefined;
     if (isSupabaseDataBackendEnabled()) {
       account = await requireWorkspaceAccount({ write: true });
-      const { data, error } = await createSupabaseAdminClient().from("brands")
-        .select("id")
-        .eq("organization_id", account.organizationId!)
-        .eq("id", parsed.data.brandId)
-        .is("deleted_at", null)
-        .maybeSingle();
-      if (error) throw new Error(error.message);
-      if (!data) throw new WorkspaceAccessError("品牌不属于当前组织", 403);
     }
 
     const result = await executeFoundationTask({
@@ -93,49 +85,12 @@ export async function POST(request: Request) {
     }));
 
     if (account?.organizationId) {
-      const supabase = createSupabaseAdminClient();
-      const existingResult = await supabase.from("detection_questions")
-        .select("id,text,source,category,enabled,updated_at")
-        .eq("organization_id", account.organizationId)
-        .eq("brand_id", parsed.data.brandId);
-      if (existingResult.error) throw new Error(existingResult.error.message);
-      const existingByText = new Map((existingResult.data || []).map((row) => [row.text.trim(), row]));
-      questions = generatedTexts.map((text) => {
-        const existing = existingByText.get(text.trim());
-        return existing ? {
-          id: existing.id,
-          text,
-          source: normalizeQuestionSource(existing.source),
-          category: existing.category || "",
-          enabled: true,
-          updatedAt: generatedAt,
-        } : {
-          id: randomUUID(),
-          text,
-          source: "generated" as const,
-          category: "",
-          enabled: true,
-          updatedAt: generatedAt,
-        };
+      questions = await saveGeneratedBrandQuestions(account, {
+        brandId: parsed.data.brandId,
+        texts: generatedTexts,
+        generatedAt,
+        promptVersion: result.promptVersion,
       });
-      const saveQuestions = await supabase.from("detection_questions").upsert(questions.map((question) => ({
-        id: question.id,
-        organization_id: account!.organizationId!,
-        brand_id: parsed.data.brandId,
-        text: question.text,
-        source: question.source,
-        category: question.category || null,
-        enabled: true,
-        prompt_version: result.promptVersion,
-        updated_at: generatedAt,
-      })), { onConflict: "id" });
-      if (saveQuestions.error) throw new Error(saveQuestions.error.message);
-      const saveBrand = await supabase.from("brands").update({
-        questions_generated_at: generatedAt,
-        updated_at: generatedAt,
-        updated_by: account.userId,
-      }).eq("organization_id", account.organizationId).eq("id", parsed.data.brandId).is("deleted_at", null);
-      if (saveBrand.error) throw new Error(saveBrand.error.message);
     }
 
     return NextResponse.json({
@@ -162,10 +117,6 @@ export async function POST(request: Request) {
       error: error instanceof Error ? error.message : "检测问题生成失败，请重试",
     }, { status: 500 });
   }
-}
-
-function normalizeQuestionSource(value: unknown): "industry" | "generated" | "custom" {
-  return value === "industry" || value === "custom" ? value : "generated";
 }
 
 function buildQuestionPrompt(profile: z.infer<typeof requestSchema>) {

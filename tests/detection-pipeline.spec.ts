@@ -5,6 +5,7 @@ import path from "node:path";
 type PublicDetection = {
   id: string;
   status: "pending" | "running" | "completed" | "failed";
+  stage?: "queued" | "collecting" | "analyzing" | "aggregating" | "completed" | "failed";
   results: Array<{
     provider: string;
     questionId: string;
@@ -52,7 +53,9 @@ async function runWorkerStep(request: APIRequestContext) {
 }
 
 async function patchStoredDetection(id: string, patch: Record<string, unknown>) {
-  const storePath = path.resolve("test-results/server-data/detection-jobs.json");
+  const dataDir = process.env.GEO_DATA_DIR;
+  if (!dataDir) throw new Error("测试检测数据目录未配置");
+  const storePath = path.join(dataDir, "detection-jobs.json");
   const store = JSON.parse(await readFile(storePath, "utf8")) as {
     version: number;
     tasks: Array<Record<string, unknown> & { id: string }>;
@@ -124,7 +127,7 @@ test("失败重试只补缺失项，已保存结果不会重复", async ({ reque
   const created = await request.post("/api/detections", {
     data: detectionBody(id, [
       "这条采集应当直接成功",
-      "[TEST:FAIL_TWICE] 这条采集首次批次失败，重试任务后成功",
+      `[TEST:FAIL_TWICE] 这条采集首次批次失败，重试任务后成功 ${id}`,
     ]),
   });
   expect(created.status()).toBe(202);
@@ -235,6 +238,29 @@ test("过期租约可由新Worker接管并从已保存结果继续", async ({ re
   await patchStoredDetection(id, { leaseExpiresAt: new Date(Date.now() - 1_000).toISOString() });
   const completed = await waitForStatus(request, id, "completed");
   expect(completed.results).toHaveLength(1);
+});
+
+test("汇总步骤超过阶段时限后转为失败而不是永久运行", async ({ request }) => {
+  test.skip(
+    process.env.GEO_RUN_AGGREGATION_TIMEOUT_TEST !== "true",
+    "仅在汇总超时专项验证时执行",
+  );
+  const id = `aggregation-timeout-${Date.now()}`;
+  const created = await request.post("/api/detections", {
+    data: detectionBody(id, ["验证汇总阶段超时恢复"]),
+  });
+  expect(created.status()).toBe(202);
+
+  const deadline = Date.now() + 8_000;
+  let latest: PublicDetection | undefined;
+  while (Date.now() < deadline) {
+    await runWorkerStep(request);
+    latest = await readDetection(request, id);
+    if (latest.status === "completed" || latest.status === "failed") break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  expect(latest?.status).toBe("failed");
+  expect(latest?.stage).toBe("failed");
 });
 
 test("底座模型结构错误只修复一次", async ({ request }) => {

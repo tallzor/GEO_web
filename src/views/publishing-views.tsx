@@ -88,7 +88,7 @@ export function PublishSelectionView({ contentId }: { contentId: string }) {
 }
 
 export function PublishProgressView({ batchId }: { batchId: string }) {
-  const updateTaskStatus = useAppStore((state) => state.updateTaskStatus);
+  const mergePublishedTaskCompletion = useAppStore((state) => state.mergePublishedTaskCompletion);
   const [batch, setBatch] = useState<PublishBatch | null>(null);
   const [error, setError] = useState("");
   const [retrying, setRetrying] = useState("");
@@ -119,9 +119,9 @@ export function PublishProgressView({ batchId }: { batchId: string }) {
     if (!cycleId) return;
     const localTask = useAppStore.getState().cycles
       .find((cycle) => cycle.id === cycleId)?.tasks.find((task) => task.id === batch.taskId);
-    if (localTask?.status !== "completed") updateTaskStatus(cycleId, batch.taskId, "completed");
+    if (localTask?.status !== "completed") mergePublishedTaskCompletion(cycleId, batch.taskId);
     taskCompletionSynced.current = true;
-  }, [batch, updateTaskStatus]);
+  }, [batch, mergePublishedTaskCompletion]);
 
   async function retry(recordId: string) {
     setRetrying(recordId); setError("");

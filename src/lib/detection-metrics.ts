@@ -63,7 +63,7 @@ export function completedDetectionsForBrand(detections: Detection[], brandId: st
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-export function isVerifiedLiveAnalysis(detection: Detection) {
+function isVerifiedLiveAnalysis(detection: Detection) {
   if (detection.dataSource !== "live_api" || !detection.diagnosis || !detection.analysisModel) return false;
   if (isTestModel(detection.analysisModel)) return false;
   return detection.results.every((result) =>

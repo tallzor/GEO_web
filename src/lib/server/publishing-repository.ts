@@ -10,6 +10,7 @@ import {
 } from "@/lib/publishing-timeout";
 import type { ChannelContent, ChannelId, PublishBatch, PublishingPlatform, PublishRecord } from "@/lib/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { applyPublicationState } from "@/lib/server/optimization-repository";
 import { decryptPublishingCredentials, encryptPublishingCredentials, hashExtensionToken, maskAppId } from "@/lib/server/publishing-secrets";
 import { createWeChatDraft, getWeChatAccessToken, uploadWeChatCover, verifyWeChatCredentials, WeChatPublishingError } from "@/lib/server/wechat-publisher";
 
@@ -284,6 +285,13 @@ export async function createPublishBatch(account: AccountContext, input: {
     await supabase.from("publish_batches").delete().eq("organization_id", organizationId).eq("id", batchId);
     throw new Error(recordsInsert.error.message);
   }
+  await applyPublicationState({
+    organizationId,
+    cycleId: text(content.cycle_id),
+    taskId: text(content.task_id),
+    contentId: input.contentId,
+    status: "publishing",
+  });
   const wechatRecord = records.find((record) => record.channel === "wechat");
   if (wechatRecord) {
     try {
@@ -293,9 +301,6 @@ export async function createPublishBatch(account: AccountContext, input: {
       await updateBatchAggregate(supabase, batchId);
     }
   }
-  const contentUpdate = await supabase.from("contents").update({ status: "publishing" })
-    .eq("organization_id", organizationId).eq("id", input.contentId);
-  if (contentUpdate.error) throw new Error(contentUpdate.error.message);
   await audit(account, "publish_batch.created", "publish_batch", batchId, { channels, contentId: input.contentId });
   return loadPublishBatch(account, batchId);
 }
@@ -597,7 +602,7 @@ async function expireTimedOutPublishRecords(
 }
 
 async function updateBatchAggregate(supabase: ReturnType<typeof createSupabaseAdminClient>, batchId: string) {
-  const recordsResult = await supabase.from("publish_records").select("status,task_id,cycle_id,content_id")
+  const recordsResult = await supabase.from("publish_records").select("status,task_id,cycle_id,content_id,organization_id")
     .eq("batch_id", batchId);
   if (recordsResult.error) throw new Error(recordsResult.error.message);
   const records = rows(recordsResult.data);
@@ -621,35 +626,22 @@ async function updateBatchAggregate(supabase: ReturnType<typeof createSupabaseAd
   const first = records[0];
   if (!first) return;
   if (successCount > 0) {
-    await completeOptimizationTask(supabase, text(first.cycle_id), text(first.task_id));
-    await supabase.from("contents").update({ status: "published" }).eq("id", text(first.content_id));
+    await applyPublicationState({
+      organizationId: text(first.organization_id),
+      cycleId: text(first.cycle_id),
+      taskId: text(first.task_id),
+      contentId: text(first.content_id),
+      status: "published",
+    });
   } else if (activeCount === 0) {
-    await supabase.from("contents").update({ status: "failed" }).eq("id", text(first.content_id));
+    await applyPublicationState({
+      organizationId: text(first.organization_id),
+      cycleId: text(first.cycle_id),
+      taskId: text(first.task_id),
+      contentId: text(first.content_id),
+      status: "failed",
+    });
   }
-}
-
-async function completeOptimizationTask(
-  supabase: ReturnType<typeof createSupabaseAdminClient>,
-  cycleId: string,
-  taskId: string,
-) {
-  const now = new Date().toISOString();
-  const updated = await supabase.from("optimization_tasks").update({ status: "completed", completed_at: now })
-    .eq("cycle_id", cycleId).eq("id", taskId).neq("status", "void");
-  if (updated.error) throw new Error(updated.error.message);
-  const taskResult = await supabase.from("optimization_tasks").select("id,day,status")
-    .eq("cycle_id", cycleId).order("day");
-  if (taskResult.error) throw new Error(taskResult.error.message);
-  const tasks = rows(taskResult.data);
-  const remaining = tasks.find((item) => !["completed", "void"].includes(text(item.status)));
-  if (!remaining) {
-    await supabase.from("optimization_cycles").update({ status: "completed", current_day: 7 }).eq("id", cycleId);
-    return;
-  }
-  if (text(remaining.status) === "pending") {
-    await supabase.from("optimization_tasks").update({ status: "in_progress" }).eq("id", text(remaining.id));
-  }
-  await supabase.from("optimization_cycles").update({ current_day: numberValue(remaining.day, 1) }).eq("id", cycleId);
 }
 
 async function enqueueWechatJob(

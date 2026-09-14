@@ -27,6 +27,7 @@ const UI = {
   hunyuan: "\u6df7\u5143\uff08\u817e\u8baf\u5143\u5b9d\uff09",
   startDetection: "\u5f00\u59cb\u68c0\u6d4b",
   resultDetail: "\u68c0\u6d4b\u7ed3\u679c\u660e\u7ec6",
+  getSuggestions: "\u83b7\u53d6\u5efa\u8bae",
   chooseGoal: "\u9009\u62e9\u76ee\u6807",
   confirmTasks: "\u786e\u8ba4\u5e76\u521b\u5efa7\u5929\u4efb\u52a1",
   logout: "\u9000\u51fa\u767b\u5f55",
@@ -156,8 +157,14 @@ test("real customer core flow uses live APIs and persists through relogin", asyn
   });
 
   await test.step("customer selects a personalized goal and receives seven tasks", async () => {
+    const suggestionRequest = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && /\/api\/detections\/[^/]+\/suggestions$/.test(new URL(response.url()).pathname),
+    { timeout: 30_000 });
+    await page.getByRole("button", { name: UI.getSuggestions }).click();
+    expect((await suggestionRequest).status()).toBe(202);
     const goalButton = page.getByRole("button", { name: UI.chooseGoal }).first();
-    await expect(goalButton).toBeVisible();
+    await expect(goalButton).toBeVisible({ timeout: 200_000 });
     await goalButton.click();
     const cycleResponsePromise = page.waitForResponse((response) =>
       response.request().method() === "POST"

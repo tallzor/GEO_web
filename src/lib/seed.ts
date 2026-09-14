@@ -136,63 +136,9 @@ export function createSeedData(): SeedData {
   currentContent.id = "content_current";
   cycle.tasks[2].contentId = currentContent.id;
 
-  const publishRecords: PublishRecord[] = [
-    {
-      id: "publish_1",
-      brandId: baseBrand.id,
-      cycleId: "cycle_previous",
-      taskId: "task_previous_1",
-      contentId: "content_previous_1",
-      contentVersion: 1,
-      title: "新手体验课避坑指南",
-      bodySnapshot: "第一次选择体验课，可以先确认课程内容、适合人群、价格和门店信息。",
-      channel: "xiaohongshu",
-      accountName: "跃动健身官方账号",
-      status: "published",
-      createdAt: "2026-07-19T08:00:00.000Z",
-      completedAt: "2026-07-19T08:00:05.000Z",
-    },
-    {
-      id: "publish_2",
-      brandId: baseBrand.id,
-      cycleId: "cycle_previous",
-      taskId: "task_previous_2",
-      contentId: "content_previous_2",
-      contentVersion: 1,
-      title: "私教体验课适合哪些人",
-        bodySnapshot: "私教体验课适合希望获得个人训练建议和动作指导的用户。",
-        channel: "wechat",
-        accountName: "跃动健身公众号",
-        status: "draft_saved",
-      createdAt: "2026-07-18T08:00:00.000Z",
-      completedAt: "2026-07-18T08:00:05.000Z",
-    },
-  ];
-
-  const platforms: PublishingPlatform[] = [
-    { channel: "wechat", name: "公众号", configured: true, accountName: "跃动健身公众号", verifiedAt: "2026-07-20T03:00:00.000Z", mode: "demo", appIdMasked: "wx********9a2f", draftEnabled: true, connectionStatus: "connected" },
-    { channel: "xiaohongshu", name: "小红书", configured: true, accountName: "跃动健身官方账号", verifiedAt: "2026-07-20T03:00:00.000Z" },
-  ];
-
-  for (const platform of platforms) {
-    platform.brandId = baseBrand.id;
-    platform.connectionMode = platform.channel === "wechat" ? "server_api" : "unavailable";
-    platform.availability = platform.channel === "xiaohongshu" ? "coming_soon" : "available";
-  }
-  platforms.push({
-    brandId: baseBrand.id,
-    channel: "zhihu",
-    name: "知乎",
-    configured: false,
-    accountName: "",
-    verifiedAt: "",
-    mode: "real",
-    draftEnabled: true,
-    connectionStatus: "disconnected",
-    connectionMode: "browser_extension",
-    availability: "available",
-  });
-
+  // 发布记录与平台配置由发布仓储提供；演示种子不再伪造外部平台状态。
+  const publishRecords: PublishRecord[] = [];
+  const platforms: PublishingPlatform[] = [];
   const publishBatches: PublishBatch[] = [];
 
   return {

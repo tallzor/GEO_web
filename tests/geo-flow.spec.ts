@@ -12,6 +12,37 @@ async function driveDetectionWorker(page: import("@playwright/test").Page, maxSt
   throw new Error(`检测 Worker 在 ${maxSteps} 步内仍未清空任务队列`);
 }
 
+async function markSeedDetectionsAsVerified(page: import("@playwright/test").Page) {
+  await page.waitForLoadState("networkidle");
+  await page.evaluate(() => {
+    const raw = localStorage.getItem("geo-web-demo-v3");
+    if (!raw) return;
+    const persisted = JSON.parse(raw);
+    const detections = persisted.state?.detections;
+    if (!Array.isArray(detections)) return;
+    for (const detection of detections) {
+      if (!detection.diagnosis || !Array.isArray(detection.results)) continue;
+      detection.dataSource = "live_api";
+      detection.analysisModel = "deepseek-v4-flash-ga-260731";
+      detection.diagnosis.analysisModel = "deepseek-v4-flash-ga-260731";
+      detection.results = detection.results.map((result: { provider: string }, index: number) => ({
+        ...result,
+        dataSource: "live_api",
+        model: result.provider === "deepseek"
+          ? "deepseek-v4-flash-260425"
+          : result.provider === "yuanbao"
+            ? "hy3"
+            : "doubao-seed-2-0-lite-260428",
+        requestId: `verified-${detection.id}-${index + 1}`,
+        analysisModel: "deepseek-v4-flash-ga-260731",
+      }));
+    }
+    localStorage.setItem("geo-web-demo-v3", JSON.stringify(persisted));
+  });
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/dev/doubao/questions", async (route) => {
     await route.fulfill({
@@ -106,6 +137,34 @@ test.beforeEach(async ({ page }) => {
   await expect(page).toHaveURL(/workbench/);
 });
 
+test("旧演示发布数据升级时清除无效记录和平台状态", async ({ page }) => {
+  await page.evaluate(() => {
+    const key = "geo-web-demo-v3";
+    const raw = localStorage.getItem(key);
+    if (!raw) throw new Error("演示数据尚未写入");
+    const persisted = JSON.parse(raw);
+    persisted.version = 3;
+    persisted.state.publishBatches = [{ id: "stale-batch" }];
+    persisted.state.publishRecords = [{
+      id: "stale-record",
+      cycleId: "missing-cycle",
+      taskId: "missing-task",
+      contentId: "missing-content",
+    }];
+    persisted.state.platforms = [{ channel: "wechat", configured: true }];
+    localStorage.setItem(key, JSON.stringify(persisted));
+  });
+
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  const migrated = await page.evaluate(() => JSON.parse(localStorage.getItem("geo-web-demo-v3") || "{}"));
+
+  expect(migrated.version).toBe(4);
+  expect(migrated.state.publishBatches).toEqual([]);
+  expect(migrated.state.publishRecords).toEqual([]);
+  expect(migrated.state.platforms).toEqual([]);
+});
+
 test("核心流程：档案、AI平台真实回答、内容和发布记录", async ({ page }, testInfo) => {
   let detectionCreateRequests = 0;
   page.on("request", (request) => {
@@ -113,7 +172,7 @@ test("核心流程：档案、AI平台真实回答、内容和发布记录", asy
   });
 
   await expect(page.getByRole("heading", { name: "跃动健身", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "GEO分析" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "分析", exact: true })).toBeVisible();
 
   await page.goto("/brand");
   await expect(page).toHaveURL(/brand\/basic/);
@@ -204,8 +263,8 @@ test("工作台：品牌摘要、合并进度和七日任务切换", async ({ pa
   await expect(analysisSummary.getByText("情感", { exact: true })).toBeVisible();
   await expect(analysisSummary.getByText("准确度", { exact: true })).toHaveCount(0);
   await expect(analysisSummary.getByText("信源可信度", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("img", { name: "GEO四维分析雷达图" })).toBeVisible();
-  await expect(page.locator(".workbench-goal-title-line")).toContainText("提升跃动健身在本地健身问题中的能见");
+  await expect(page.getByRole("img", { name: "品牌营销分析雷达图" })).toBeVisible();
+  await expect(page.locator(".workbench-goal-title-line")).toContainText("提升跃动健身在本地服务问题中的能见");
   await expect(page.locator(".workbench-goal-title-line")).toContainText("进行中");
 
   const calendar = page.getByRole("group", { name: "7天任务日期" });
@@ -242,7 +301,7 @@ test("品牌隔离：新建品牌后工作空间切换", async ({ page }) => {
   await primaryEditButton.click();
   await expect(page.getByLabel("品牌名称")).toHaveValue("测试健身馆");
   await page.goto("/geo");
-  await expect(page.getByText("尚未进行GEO检测")).toBeVisible();
+  await expect(page.getByText("尚未进行检测")).toBeVisible();
 });
 
 test("新建品牌：三步向导可跳过并保存产品与竞品", async ({ page }) => {
@@ -359,16 +418,17 @@ test("品牌档案：固定品牌标题、只读编辑和三类名称搜索", as
 });
 
 test("任务终止后可重新选择目标并生成新周期", async ({ page }) => {
+  await markSeedDetectionsAsVerified(page);
   await page.goto("/tasks");
   await page.getByRole("button", { name: "终止任务" }).click();
   await page.getByRole("button", { name: "确认终止任务" }).click({ force: true });
   await expect(page.getByText("上一轮任务已终止")).toBeVisible();
-  await page.getByRole("link", { name: "重新选择优化目标" }).click();
+  await page.goto("/analysis/visibility?detection=detection_latest");
   await page.getByRole("button", { name: "选择目标" }).first().click();
   await page.getByRole("button", { name: "确认并创建7天任务" }).click({ force: true });
   await expect(page).toHaveURL(/tasks/);
   await expect(page.getByText("7天优化任务表")).toBeVisible();
-  await expect(page.getByText("建立“本地健身入门服务”清晰认知", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "提升跃动健身在本地服务问题中的能见" })).toBeVisible();
 });
 
 test("返回操作统一位于标题左侧并回到上一页", async ({ page }) => {
@@ -388,29 +448,7 @@ test("分析模块不会展示演示或测试模型生成的数据", async ({ pa
 });
 
 test("检测与分析：模块拆分、单批次切换和无历史对比入口", async ({ page }, testInfo) => {
-  await page.evaluate(() => {
-    const raw = localStorage.getItem("geo-web-demo-v3");
-    if (!raw) return;
-    const persisted = JSON.parse(raw);
-    const detection = persisted.state?.detections?.find((item: { diagnosis?: unknown }) => item.diagnosis);
-    if (!detection) return;
-    detection.dataSource = "live_api";
-    detection.analysisModel = "deepseek-v4-flash-ga-260731";
-    detection.diagnosis.analysisModel = "deepseek-v4-flash-ga-260731";
-    detection.results = detection.results.map((result: { provider: string }, index: number) => ({
-      ...result,
-      dataSource: "live_api",
-      model: result.provider === "deepseek"
-        ? "deepseek-v4-flash-260425"
-        : result.provider === "yuanbao"
-          ? "hy3"
-          : "doubao-seed-2-0-lite-260428",
-      requestId: `verified-request-${index + 1}`,
-      analysisModel: "deepseek-v4-flash-ga-260731",
-    }));
-    localStorage.setItem("geo-web-demo-v3", JSON.stringify(persisted));
-  });
-  await page.reload();
+  await markSeedDetectionsAsVerified(page);
   await page.goto("/geo");
   const primaryNav = page.locator(testInfo.project.name === "mobile" ? ".mobile-nav" : ".sidebar");
   await expect(primaryNav.getByRole("link", { name: "检测", exact: true })).toBeVisible();
@@ -448,43 +486,32 @@ test("检测与分析：模块拆分、单批次切换和无历史对比入口",
   await expect(page.getByText("当前批次识别结果")).toBeVisible();
 });
 
-test("发布平台移除可信商家页并支持公众号配置与草稿箱保存", async ({ page }) => {
+test("发布平台展示公众号草稿箱能力和安全配置要求", async ({ page }) => {
   await page.goto("/settings/platforms");
   await expect(page.getByRole("heading", { name: "发布平台配置" })).toBeVisible();
   await expect(page.getByText("可信商家页")).toHaveCount(0);
-  await expect(page.getByText("草稿接口已就绪，可将内容存入公众号草稿箱", { exact: true })).toBeVisible();
-
-  await page.getByRole("button", { name: "管理连接" }).click();
-  await expect(page.getByText("内容可存入公众号草稿箱")).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "解除连接" }).click();
-  await expect(page.getByText("第三步：填写并验证")).toBeVisible();
-
-  await page.getByPlaceholder("用于区分公众号账号").fill("跃动健身测试公众号");
-  await page.getByPlaceholder("以wx开头").fill("wxdemoaccount01");
-  await page.getByPlaceholder("请勿填写真实AppSecret").fill("demoSecret123");
-  await page.getByRole("button", { name: "验证并连接" }).click();
-  await expect(page.getByText("草稿接口已就绪", { exact: true })).toBeVisible();
-
-  await page.goto("/tasks");
-  const wechatTask = page.locator("article").filter({ hasText: "第二篇公众号内容已准备好" });
-  await wechatTask.getByRole("button", { name: "查看并存草稿" }).click();
-  await page.getByRole("button", { name: /运行风险检查/ }).click();
-  const saveDraftButton = page.getByRole("button", { name: "检查并存入草稿箱" });
-  await expect(saveDraftButton).toBeEnabled();
-  await saveDraftButton.click();
-  await page.getByRole("button", { name: "确认保存草稿" }).click({ force: true });
-  await expect(page).toHaveURL(/publishes/);
-  await expect(page.getByRole("cell", { name: "已存草稿箱" }).first()).toBeVisible();
+  const wechatCard = page.locator(".card").filter({ has: page.getByRole("heading", { name: "微信公众号" }) });
+  await expect(wechatCard.getByText("通过官方接口存入公众号草稿箱")).toBeVisible();
+  await expect(wechatCard.getByText("未配置", { exact: true })).toBeVisible();
+  await wechatCard.getByRole("button", { name: "连接账号" }).click();
+  await expect(page.getByRole("heading", { name: "连接微信公众号" })).toBeVisible();
+  await expect(page.getByText(/服务器固定出口IP/)).toBeVisible();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.locator('input[type="password"]')).toBeVisible();
+  await expect(dialog.getByText(/默认封面/).first()).toBeVisible();
+  await page.getByRole("button", { name: "验证并保存" }).click();
+  await expect(page.getByText("请完整填写公众号名称、AppID和AppSecret")).toBeVisible();
 });
 
-test("问答素材任务支持一键复制并自动完成", async ({ page }) => {
+test("问答素材支持复制且复制后不会自动完成任务", async ({ page }) => {
   await page.goto("/tasks");
   const copyTask = page.locator("article").filter({ hasText: "常见问答素材已准备好" });
-  await copyTask.getByRole("button", { name: "查看并复制" }).click();
-  await expect(page.getByText("无需配置账号")).toBeVisible();
-  await page.getByRole("button", { name: "一键复制" }).click();
-  await expect(page.getByText("内容已复制，任务已完成")).toBeVisible();
+  await copyTask.getByRole("button", { name: "查看详情" }).click();
+  await expect(page.getByText(/复制内容不会完成任务/)).toBeVisible();
+  await page.getByRole("button", { name: "复制内容" }).click();
+  await expect(page.getByText("内容已复制", { exact: true })).toBeVisible();
+  await page.goto("/tasks");
+  await expect(page.locator("article").filter({ hasText: "常见问答素材已准备好" })).not.toContainText("已完成");
 });
 
 test("全部页面可访问且无运行时错误页", async ({ page }) => {

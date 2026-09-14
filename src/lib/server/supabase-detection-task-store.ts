@@ -11,7 +11,11 @@ import type {
   RankedBrandMention,
   SentimentLabel,
 } from "@/lib/types";
-import type { DetectionTaskBrand, ServerDetectionTask } from "@/lib/server/detection-task-store";
+import type {
+  DetectionTaskBrand,
+  DetectionTaskUpdateGuard,
+  ServerDetectionTask,
+} from "@/lib/server/detection-task-store";
 import type { DetectionTaskStatus } from "@/lib/server/detection-task-store";
 
 type Row = Record<string, unknown>;
@@ -36,6 +40,7 @@ function optionalNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/* 已停用：检测重试现在保留已完成结果，只补跑失败单元，禁止整批清空。
 export async function clearSupabaseDetectionAttemptResults(
   detectionId: string,
   organizationId?: string,
@@ -46,6 +51,7 @@ export async function clearSupabaseDetectionAttemptResults(
   const { error } = await query;
   if (error) throw new Error(error.message);
 }
+*/
 
 function stringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -117,6 +123,43 @@ export async function releaseSupabaseDetectionTask(id: string, workerId: string)
     p_detection_id: id, p_worker_id: workerId,
   });
   if (error) throw new Error(error.message);
+}
+
+export async function markSupabaseDetectionTaskFailed(
+  id: string,
+  workerId: string,
+  message: string,
+  detail: string,
+) {
+  const supabase = createSupabaseAdminClient();
+  const now = new Date().toISOString();
+  const failed = await supabase.from("detections").update({
+    status: "failed",
+    stage: "failed",
+    completed_at: now,
+    progress_message: message,
+    worker_id: null,
+    heartbeat_at: null,
+    lease_expires_at: null,
+  }).eq("id", id).eq("worker_id", workerId).in("status", ["pending", "running"])
+    .select("id,organization_id,brand_id,providers").maybeSingle();
+  if (failed.error) throw new Error(failed.error.message);
+  if (!failed.data) return false;
+
+  const row = failed.data as Row;
+  const runError = await supabase.from("detection_run_errors").upsert({
+    organization_id: text(row.organization_id),
+    brand_id: text(row.brand_id),
+    detection_id: id,
+    provider: stringArray(row.providers)[0] || null,
+    question_id: null,
+    run_key: "task",
+    message: detail,
+    category: "analysis",
+    retryable: true,
+  }, { onConflict: "detection_id,run_key" });
+  if (runError.error) throw new Error(runError.error.message);
+  return true;
 }
 
 export async function claimNextSupabaseSuggestionTask(workerId: string, leaseSeconds: number) {
@@ -215,11 +258,13 @@ export async function listSupabaseDetectionTasks(brandId?: string, organizationI
   });
 }
 
-export async function saveSupabaseDetectionTask(task: ServerDetectionTask) {
+export async function saveSupabaseDetectionTask(
+  task: ServerDetectionTask,
+  guard?: DetectionTaskUpdateGuard,
+) {
   if (!task.organizationId) throw new Error("检测任务缺少组织信息");
   const supabase = createSupabaseAdminClient();
-  const saveParent = async () => {
-    const detectionResult = await supabase.from("detections").upsert({
+  const parentRow = {
       id: task.id,
       organization_id: task.organizationId,
       brand_id: task.brandId,
@@ -254,8 +299,13 @@ export async function saveSupabaseDetectionTask(task: ServerDetectionTask) {
       created_by: task.createdBy || null,
       created_at: task.createdAt,
       updated_at: task.updatedAt,
-    }, { onConflict: "id" });
+  };
+  const saveParent = async () => {
+    const detectionResult = guard
+      ? await guardedParentUpdate(supabase, parentRow, task.organizationId!, guard)
+      : await supabase.from("detections").upsert(parentRow, { onConflict: "id" });
     if (detectionResult.error) throw new Error(`检测任务状态保存失败：${detectionResult.error.message}`);
+    if (guard && !detectionResult.data) throw new Error("检测任务状态已变化，忽略迟到的执行结果");
   };
 
   // 新任务需要先建立父记录；后续步骤则先保存明细，避免明细失败却把父任务标成已完成。
@@ -399,6 +449,21 @@ export async function saveSupabaseDetectionTask(task: ServerDetectionTask) {
   }
   await saveParent();
   return task;
+}
+
+async function guardedParentUpdate(
+  supabase: ReturnType<typeof createSupabaseAdminClient>,
+  parentRow: Record<string, unknown>,
+  organizationId: string,
+  guard: DetectionTaskUpdateGuard,
+) {
+  let query = supabase.from("detections").update(parentRow)
+    .eq("id", String(parentRow.id))
+    .eq("organization_id", organizationId);
+  if (guard.status) query = query.eq("status", guard.status);
+  if (guard.stage) query = query.eq("stage", guard.stage);
+  if (guard.workerId) query = query.eq("worker_id", guard.workerId);
+  return query.select("id").maybeSingle();
 }
 
 function mapResult(row: Row, analysis?: Row): DetectionResult {

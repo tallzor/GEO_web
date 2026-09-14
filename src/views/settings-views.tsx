@@ -351,20 +351,22 @@ function PublishingAccountCard({ name, mark, color, platform, description, disab
 
 export function SubscriptionView() {
   const reset = useAppStore((state) => state.resetDemo);
+  const dataMode = useAppStore((state) => state.dataMode);
+  const isDemo = dataMode === "local";
   const [toast, setToast] = useState("");
-  return <SettingsFrame title="账号与订阅" description="查看当前演示账号的订阅状态和可用权益。">
+  return <SettingsFrame title="账号与订阅" description="查看当前账号的使用状态和可用权益。">
     <div className="split-layout">
       <Card title="当前套餐" action={<Badge tone="success"><span className="status-dot" />有效</Badge>}>
-        <div style={{ display: "flex", alignItems: "end", gap: 9 }}><strong style={{ fontSize: 30 }}>GEO演示版</strong><span className="muted" style={{ paddingBottom: 4 }}>内部体验</span></div>
-        <p className="secondary">生效时间：2026-07-01　到期时间：2026-12-31</p>
+        <div style={{ display: "flex", alignItems: "end", gap: 9 }}><strong style={{ fontSize: 30 }}>{isDemo ? "GEO演示版" : "GEO内测版"}</strong><span className="muted" style={{ paddingBottom: 4 }}>内部体验</span></div>
+        <p className="secondary">{isDemo ? "当前使用本地演示数据，不涉及真实计费。" : "当前为受邀内测账号，暂不展示模拟计费周期。"}</p>
         <div className="notice"><CircleAlert size={18} />订阅商业模式尚未最终确定，本页只体现已确认的账号与订阅信息结构。</div>
       </Card>
-      <Card title="演示数据">
+      {isDemo && <Card title="演示数据">
         <p className="secondary" style={{ lineHeight: 1.7 }}>可一键恢复为初始健身行业演示数据，用于重新体验完整流程。</p>
         <Button onClick={() => { if (confirm("确认重置演示数据？当前浏览器中新增的品牌和操作记录将被替换。")) { reset(); setToast("演示数据已重置"); } }}><RotateCcw size={16} />重置演示数据</Button>
-      </Card>
+      </Card>}
     </div>
-    <Card title="套餐权益" className="section-gap"><div className="grid grid-3">{["国内AI平台检测与四维诊断", "1—3项优化目标与7天任务", "内容生成、风险检查与模拟发布"].map((item) => <div className="notice notice-success" key={item}><Check size={18} />{item}</div>)}</div></Card>
+    <Card title="套餐权益" className="section-gap"><div className="grid grid-3">{["国内AI平台检测与四维诊断", "1—3项优化目标与7天任务", "内容生成、风险检查与多平台同步"].map((item) => <div className="notice notice-success" key={item}><Check size={18} />{item}</div>)}</div></Card>
     {toast && <Toast message={toast} onClose={() => setToast("")} />}
   </SettingsFrame>;
 }

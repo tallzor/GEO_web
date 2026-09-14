@@ -9,7 +9,7 @@
     "worker:publishing": "node --env-file-if-exists=.env.local scripts/publishing-worker.mjs",
     "worker:detection": "node --env-file-if-exists=.env.local scripts/detection-worker.mjs",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "test:e2e": "npm run test:e2e:real",
     "test:e2e:mock": "node scripts/run-mock-e2e.mjs",
     "test:e2e:real": "node --env-file-if-exists=.env.local node_modules/@playwright/test/cli.js test -c playwright.real.config.ts",
@@ -25,7 +25,7 @@
     "@supabase/supabase-js": "^2.111.0",
     "echarts": "^6.1.0",
     "lucide-react": "^1.25.0",
-    "next": "^16.2.10",
+    "next": "^16.3.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "zod": "^4.4.3",
@@ -39,7 +39,7 @@
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.2.10",
-    "postcss": "^8.5.20",
+    "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3"
   }

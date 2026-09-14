@@ -3,7 +3,8 @@ import "server-only";
 import { z } from "zod";
 import type { AccountContext } from "@/lib/auth/types";
 import { executeFoundationTask, FoundationModelError } from "@/lib/server/foundation-model";
-import { loadWorkspaceSnapshot, saveGeneratedContent } from "@/lib/server/workspace-repository";
+import { saveGeneratedContent } from "@/lib/server/optimization-repository";
+import { loadWorkspaceSnapshot } from "@/lib/server/workspace-read-repository";
 import type {
   Brand,
   ChannelId,

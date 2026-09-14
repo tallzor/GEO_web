@@ -16,6 +16,7 @@ import {
   getSupabaseDetectionTaskStatus,
   heartbeatSupabaseDetectionTask,
   listSupabaseDetectionTasks,
+  markSupabaseDetectionTaskFailed,
   releaseSupabaseDetectionTask,
   saveSupabaseDetectionTask,
 } from "@/lib/server/supabase-detection-task-store";
@@ -42,6 +43,11 @@ export type DetectionTaskStatus = Pick<
   "id" | "status" | "stage" | "totalRuns" | "completedRuns" | "failedRuns" | "attempt" | "updatedAt"
   | "collectionTotal" | "collectionCompleted" | "analysisTotal" | "analysisCompleted" | "progressMessage"
 >;
+
+export type DetectionTaskUpdateGuard = Partial<Pick<
+  ServerDetectionTask,
+  "status" | "stage" | "workerId"
+>>;
 
 type DetectionStoreFile = {
   version: 1;
@@ -132,6 +138,45 @@ export async function releaseDetectionTask(id: string, workerId: string) {
   }));
 }
 
+export async function markDetectionTaskFailed(
+  id: string,
+  workerId: string,
+  message: string,
+  detail: string,
+) {
+  if (isSupabaseDataBackendEnabled()) {
+    return markSupabaseDetectionTaskFailed(id, workerId, message, detail);
+  }
+  return serializeWrite(async () => {
+    const store = await readStore();
+    const index = store.tasks.findIndex((task) => task.id === id && task.workerId === workerId);
+    if (index < 0) return false;
+    const current = store.tasks[index];
+    const now = new Date().toISOString();
+    store.tasks[index] = {
+      ...current,
+      status: "failed",
+      stage: "failed",
+      completedAt: now,
+      updatedAt: now,
+      progressMessage: message,
+      workerId: undefined,
+      heartbeatAt: undefined,
+      leaseExpiresAt: undefined,
+      runErrors: [...(current.runErrors || []).filter((item) => item.runKey !== "task"), {
+        provider: current.providers[0] || "doubao",
+        questionId: "__task__",
+        runKey: "task",
+        message: detail,
+        category: "analysis",
+        retryable: true,
+      }],
+    };
+    await writeStore(store);
+    return true;
+  });
+}
+
 export async function claimNextSuggestionTask(workerId: string, leaseSeconds = 180) {
   if (isSupabaseDataBackendEnabled()) return claimNextSupabaseSuggestionTask(workerId, leaseSeconds);
   return serializeWrite(async () => {
@@ -184,25 +229,31 @@ export function updateDetectionTask(
   id: string,
   update: (task: ServerDetectionTask) => ServerDetectionTask,
   organizationId?: string,
+  guard?: DetectionTaskUpdateGuard,
 ) {
   if (isSupabaseDataBackendEnabled()) {
     return serializeWrite(async () => {
       const task = await getSupabaseDetectionTask(id, organizationId);
-      if (!task) return undefined;
+      if (!task || !matchesGuard(task, guard)) return undefined;
       const next = { ...update(task), updatedAt: new Date().toISOString() };
-      await saveSupabaseDetectionTask(next);
+      await saveSupabaseDetectionTask(next, guard);
       return next;
     });
   }
   return serializeWrite(async () => {
     const store = await readStore();
     const index = store.tasks.findIndex((task) => task.id === id);
-    if (index < 0) return undefined;
+    if (index < 0 || !matchesGuard(store.tasks[index], guard)) return undefined;
     const next = update(store.tasks[index]);
     store.tasks[index] = { ...next, updatedAt: new Date().toISOString() };
     await writeStore(store);
     return store.tasks[index];
   });
+}
+
+function matchesGuard(task: ServerDetectionTask, guard?: DetectionTaskUpdateGuard) {
+  if (!guard) return true;
+  return Object.entries(guard).every(([key, value]) => task[key as keyof DetectionTaskUpdateGuard] === value);
 }
 
 export function makeServerDetectionTask(input: {

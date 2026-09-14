@@ -4,6 +4,7 @@ out/
 playwright-report/
 test-results/
 *.tsbuildinfo
+next-env.d.ts
 *.log
 .env*
 !.env.example

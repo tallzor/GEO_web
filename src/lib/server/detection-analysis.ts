@@ -74,8 +74,9 @@ const optimizationGoalPayloadSchema = z.object({
 });
 
 const optimizationGoalPromptVersion = "optimization-goal-v3-positioning-light";
-export const detectionAnalysisPromptVersion = "detection-analysis-v4-question-batch";
-export const detectionAnalysisRuleVersion = "geo-four-dimensions-v3";
+const detectionAnalysisPromptVersion = "detection-analysis-v4-question-batch";
+// 已停用：旧规则版本常量没有进入持久化或分析输出，避免形成无效版本标识。
+// export const detectionAnalysisRuleVersion = "geo-four-dimensions-v3";
 
 export type DetectionAnalysisInput = {
   brand: {

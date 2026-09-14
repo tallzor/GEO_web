@@ -20,6 +20,7 @@ import {
   claimNextSuggestionTask,
   getDetectionTask,
   heartbeatDetectionTask,
+  markDetectionTaskFailed,
   releaseDetectionTask,
   updateDetectionTask,
   type ServerDetectionTask,
@@ -29,6 +30,8 @@ const HEARTBEAT_MS = 20_000;
 const LEASE_SECONDS = 180;
 const DEFAULT_COLLECTION_CONCURRENCY = 3;
 const RETRY_DELAY_MS = 750;
+const DEFAULT_STAGE_TIMEOUT_MS = 240_000;
+const DEFAULT_AGGREGATION_TIMEOUT_MS = 120_000;
 const mockCollectionAttempts = new Map<string, number>();
 const logger = createLogger("detection-task-runner");
 
@@ -48,7 +51,12 @@ export function isProviderReady(provider: ProviderId) {
 export async function processNextDetectionWork(workerId: string) {
   const task = await claimNextDetectionTask(workerId, LEASE_SECONDS);
   if (task) {
-    await withLease(task.id, workerId, () => processDetectionStage(task.id));
+    await withLease(
+      task.id,
+      workerId,
+      () => processDetectionStage(task.id, workerId),
+      stageTimeoutMs(task.stage),
+    );
     return { processed: true, kind: "detection" as const, id: task.id };
   }
   const suggestionTask = await claimNextSuggestionTask(workerId, LEASE_SECONDS);
@@ -59,27 +67,32 @@ export async function processNextDetectionWork(workerId: string) {
   return { processed: false };
 }
 
-async function withLease(id: string, workerId: string, operation: () => Promise<void>) {
+async function withLease(
+  id: string,
+  workerId: string,
+  operation: () => Promise<void>,
+  timeoutMs?: number,
+) {
   const timer = setInterval(() => {
     void heartbeatDetectionTask(id, workerId, LEASE_SECONDS).catch(() => undefined);
   }, HEARTBEAT_MS);
   timer.unref?.();
   try {
-    await operation();
+    await (timeoutMs ? withTimeout(operation(), timeoutMs) : operation());
   } catch (error) {
-    await markUnexpectedFailure(id, error);
+    await markUnexpectedFailure(id, workerId, error);
   } finally {
     clearInterval(timer);
     await releaseDetectionTask(id, workerId).catch(() => undefined);
   }
 }
 
-async function processDetectionStage(id: string) {
+async function processDetectionStage(id: string, workerId: string) {
   const task = await getDetectionTask(id);
   if (!task || !["pending", "running"].includes(task.status)) return;
   if (task.stage === "queued" || task.stage === "collecting") return processCollectionBatch(task);
   if (task.stage === "analyzing") return processAnalysisBatch(task);
-  if (task.stage === "aggregating") return aggregateDiagnosis(task);
+  if (task.stage === "aggregating") return aggregateDiagnosis(task, workerId);
 }
 
 async function processCollectionBatch(task: ServerDetectionTask) {
@@ -191,9 +204,13 @@ async function processAnalysisBatch(task: ServerDetectionTask) {
   }
 }
 
-async function aggregateDiagnosis(task: ServerDetectionTask) {
+async function aggregateDiagnosis(task: ServerDetectionTask, workerId: string) {
+  const testDelayMs = process.env.GEO_TEST_MOCK_AI === "true"
+    ? Math.max(0, Number.parseInt(process.env.GEO_TEST_AGGREGATION_DELAY_MS || "0", 10) || 0)
+    : 0;
+  if (testDelayMs) await wait(testDelayMs);
   const latest = await getDetectionTask(task.id);
-  if (!latest) return;
+  if (!latest || latest.status !== "running" || latest.stage !== "aggregating" || latest.workerId !== workerId) return;
   const input = taskAnalysisInput(latest, latest.results);
   const analyses = latest.results.filter((item) => item.analysisModel).map(resultAnalysisFromResult);
   if (analyses.length !== latest.results.length) {
@@ -207,7 +224,7 @@ async function aggregateDiagnosis(task: ServerDetectionTask) {
     stage: "completed",
     completedAt: new Date().toISOString(),
     progressMessage: "检测与分析已完成，可查看四维结果",
-  }));
+  }), { status: "running", stage: "aggregating", workerId });
 }
 
 async function processSuggestion(id: string) {
@@ -282,37 +299,63 @@ async function failStage(id: string, message: string) {
   }));
 }
 
-async function markUnexpectedFailure(id: string, error: unknown) {
-  await updateDetectionTask(id, (current) => progress({
-    ...current,
-    status: "failed",
-    stage: "failed",
-    completedAt: new Date().toISOString(),
-    progressMessage: "任务意外中断，可从检测记录重试",
-    runErrors: [...(current.runErrors || []).filter((item) => item.runKey !== "task"), {
-      provider: current.providers[0] || "doubao",
-      questionId: "__task__",
-      runKey: "task",
-      message: error instanceof Error ? error.message : "检测任务执行失败",
-      category: "collection",
-      retryable: true,
-    }],
-  })).catch(() => undefined);
+async function markUnexpectedFailure(id: string, workerId: string, error: unknown) {
+  await markDetectionTaskFailed(
+    id,
+    workerId,
+    error instanceof DetectionStageTimeoutError
+      ? "检测阶段执行超时，可从检测记录重试"
+      : "任务意外中断，可从检测记录重试",
+    error instanceof Error ? error.message : "检测任务执行失败",
+  ).catch((failure) => {
+    logger.error("failed to persist terminal detection state", {
+      detectionId: id,
+      error: failure instanceof Error ? failure.message : String(failure),
+    });
+  });
 }
 
 function progress(task: ServerDetectionTask): ServerDetectionTask {
-  const collectionCompleted = task.results.length + collectionRunErrors(task).length;
+  const collectionTotal = task.collectionTotal ?? task.providers.length * task.questionSnapshots.length;
+  const collectionCompleted = Math.min(collectionTotal, task.results.length + collectionRunErrors(task).length);
   const analyzedQuestions = new Set(task.results.filter((item) => item.analysisModel).map((item) => item.questionId));
-  const analysisCompleted = analyzedQuestions.size;
+  const analysisTotal = task.analysisTotal ?? task.questionSnapshots.length;
+  const analysisCompleted = Math.min(analysisTotal, analyzedQuestions.size);
   return {
     ...task,
-    collectionTotal: task.collectionTotal ?? task.providers.length * task.questionSnapshots.length,
+    collectionTotal,
     collectionCompleted,
-    analysisTotal: task.analysisTotal ?? task.questionSnapshots.length,
+    analysisTotal,
     analysisCompleted,
     completedRuns: collectionCompleted + analysisCompleted + (task.diagnosis ? 1 : 0),
     failedRuns: (task.runErrors || []).length,
   };
+}
+
+class DetectionStageTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`检测阶段超过 ${timeoutMs}ms 未完成`);
+    this.name = "DetectionStageTimeoutError";
+  }
+}
+
+function withTimeout<T>(operation: Promise<T>, timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new DetectionStageTimeoutError(timeoutMs)), timeoutMs);
+    timer.unref?.();
+  });
+  return Promise.race([operation, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+function stageTimeoutMs(stage: ServerDetectionTask["stage"]) {
+  if (stage === "aggregating") {
+    const configured = Number.parseInt(process.env.GEO_AGGREGATION_TIMEOUT_MS || "", 10);
+    return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_AGGREGATION_TIMEOUT_MS;
+  }
+  return DEFAULT_STAGE_TIMEOUT_MS;
 }
 
 function collectionRunErrors(task: ServerDetectionTask) {
@@ -410,8 +453,12 @@ function classifyAnalysisError(error: unknown) {
 function isRetryableAnalysisError(error: unknown) { return error instanceof DetectionAnalysisError && error.retryable; }
 function appendModel(existing: string | undefined, model: string) { return [...new Set([...(existing || "").split(", ").filter(Boolean), model])].join(", "); }
 
-async function updateOrThrow(id: string, update: (task: ServerDetectionTask) => ServerDetectionTask) {
-  const task = await updateDetectionTask(id, update);
+async function updateOrThrow(
+  id: string,
+  update: (task: ServerDetectionTask) => ServerDetectionTask,
+  guard?: Parameters<typeof updateDetectionTask>[3],
+) {
+  const task = await updateDetectionTask(id, update, undefined, guard);
   if (!task) throw new Error("检测任务不存在");
   return task;
 }

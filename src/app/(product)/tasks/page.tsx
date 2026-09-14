@@ -1,2 +1,2 @@
-import { TasksViewV2 } from "@/views/task-views";
-export default function Page() { return <TasksViewV2 />; }
+import { TasksView } from "@/views/task-views";
+export default function Page() { return <TasksView />; }

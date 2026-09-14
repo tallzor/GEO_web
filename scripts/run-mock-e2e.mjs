@@ -1,15 +1,19 @@
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const port = 3100;
 const baseUrl = `http://127.0.0.1:${port}`;
+const temporaryDataDir = process.env.GEO_DATA_DIR ? "" : mkdtempSync(path.join(tmpdir(), "geo-web-e2e-"));
+const dataDir = process.env.GEO_DATA_DIR || temporaryDataDir;
 const env = {
   ...process.env,
   GEO_TEST_MOCK_AI: "true",
   ENABLE_LOCAL_AI_API: "true",
   GEO_DATA_BACKEND: "local",
   GEO_AUTH_MODE: process.env.GEO_TEST_AUTH_MODE || "demo",
-  GEO_DATA_DIR: process.env.GEO_DATA_DIR || path.resolve("test-results/server-data"),
+  GEO_DATA_DIR: dataDir,
   GEO_TEST_SLOW_MS: process.env.GEO_TEST_SLOW_MS || "0",
   GEO_INTERNAL_BASE_URL: baseUrl,
   GEO_WORKER_TOKEN: "e2e-detection-worker-token",
@@ -47,6 +51,7 @@ async function shutdown(exitCode) {
   stopping = true;
   await stopProcessTree(tests);
   await stopProcessTree(server);
+  if (temporaryDataDir) rmSync(temporaryDataDir, { recursive: true, force: true });
   process.exit(exitCode);
 }
 

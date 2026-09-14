@@ -231,7 +231,7 @@ export function DetectionProgressView() {
   };
 
   useEffect(() => {
-    if (!detection || detection.status !== "running" || detection.dataSource === "live_api") return;
+    if (!detection || detection.status !== "running" || detection.serverManaged) return;
     const timer = window.setInterval(() => advance(detection.id), 650);
     return () => window.clearInterval(timer);
   }, [advance, detection]);
@@ -270,7 +270,7 @@ export function DetectionProgressView() {
   const analysisLabel = analysisComplete ? "100%" : analysisSkipped ? "未执行" : detection.stage === "failed" ? "失败" : detection.stage === "analyzing" ? `${analysisPercent}%` : detection.stage === "aggregating" ? "汇总中" : "等待中";
   const failureMessage = detection.runErrors?.[0]?.message;
   return <>
-    {detection.dataSource === "live_api" && <LiveDetectionRunner key={`${detection.id}:${detection.attempt || 1}:${detection.status}`} detectionId={detection.id} />}
+    {detection.serverManaged && <LiveDetectionRunner key={`${detection.id}:${detection.attempt || 1}:${detection.status}`} detectionId={detection.id} />}
     <PageHeader
       title="检测进度"
       description="系统将先采集AI回答，再完成单批次分析；完成后自动进入结果页。"

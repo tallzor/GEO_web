@@ -1,6 +1,6 @@
 import type { RecommendationType, SentimentLabel } from "@/lib/types";
 
-export const recommendationWeights: Record<RecommendationType, number> = {
+const recommendationWeights: Record<RecommendationType, number> = {
   top_pick: 1,
   recommended: 0.8,
   conditional: 0.6,

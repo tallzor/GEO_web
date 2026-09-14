@@ -14,6 +14,7 @@ export function isoNow() {
   return new Date().toISOString();
 }
 
+/* 已停用：页面均已按各自展示语境格式化日期，不再使用统一的旧格式。
 export function formatDate(value?: string, withTime = false) {
   if (!value) return "—";
   const date = new Date(value);
@@ -24,6 +25,7 @@ export function formatDate(value?: string, withTime = false) {
     ...(withTime ? { hour: "2-digit", minute: "2-digit" } : {}),
   }).format(date);
 }
+*/
 
 export function addDays(value: string, days: number) {
   const date = new Date(value);

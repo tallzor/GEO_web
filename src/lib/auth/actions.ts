@@ -3,8 +3,9 @@
 import { z } from "zod";
 import { isSupabaseAuthEnabled } from "@/lib/supabase/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import type { SignInResult, SimpleActionResult } from "./types";
+import type { SimpleActionResult } from "./types";
 
+/* 已停用：登录已改为浏览器端 Supabase Auth，以确保会话 Cookie 在跳转前就绪。
 const emailSchema = z.string().email();
 const internalAccountSchema = z.string().regex(
   /^[a-zA-Z0-9][a-zA-Z0-9._-]{2,39}$/,
@@ -75,6 +76,7 @@ export async function signInAction(input: {
     return { ok: false, message: "登录服务暂不可用，请稍后重试" };
   }
 }
+*/
 
 export async function signOutAction(): Promise<SimpleActionResult> {
   if (!isSupabaseAuthEnabled()) {
