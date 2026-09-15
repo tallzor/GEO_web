@@ -79,6 +79,75 @@ export const httpStoreAdapter: StoreRemotePort = {
     });
     return readEntity<CognitionRun>(response, "run", "认知洞察确认失败");
   },
+
+  async addQuestion(input) {
+    const response = await fetch("/api/questions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    return readEntity(response, "question", "检测问题添加失败");
+  },
+
+  async setQuestionEnabled(questionId, enabled) {
+    const response = await fetch("/api/questions", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ questionId, enabled }),
+    });
+    return readEntity(response, "question", "检测问题状态更新失败");
+  },
+
+  async deleteQuestion(questionId) {
+    const response = await fetch(`/api/questions?questionId=${encodeURIComponent(questionId)}`, { method: "DELETE" });
+    if (!response.ok) {
+      const payload = await readPayload(response);
+      throw new Error(readPayloadError(payload, "检测问题删除失败"));
+    }
+  },
+
+  async startQuestionSimulation(input) {
+    const response = await fetch("/api/questions/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    return readEntity(response, "run", "模拟问题生成启动失败");
+  },
+
+  async getQuestionSimulation(input) {
+    const params = new URLSearchParams();
+    if (input.runId) params.set("runId", input.runId);
+    if (input.brandId) params.set("brandId", input.brandId);
+    if (input.subjectType) params.set("subjectType", input.subjectType);
+    if (input.subjectId) params.set("subjectId", input.subjectId);
+    const response = await fetch(`/api/questions/generate?${params.toString()}`, { cache: "no-store" });
+    if (response.status === 404) return undefined;
+    return readEntity(response, "run", "模拟生成批次读取失败");
+  },
+
+  async retryQuestionSimulation(runId) {
+    const response = await fetch(`/api/question-simulations/${encodeURIComponent(runId)}/retry`, { method: "POST" });
+    return readEntity(response, "run", "模拟问题生成重试失败");
+  },
+
+  async confirmQuestionSimulation(runId, questions) {
+    const response = await fetch(`/api/question-simulations/${encodeURIComponent(runId)}/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ questions }),
+    });
+    const payload = await readPayload(response);
+    if (!response.ok || !payload?.run || !Array.isArray(payload.questions)) {
+      throw new Error(readPayloadError(payload, "候选问题确认失败"));
+    }
+    return payload as unknown as Awaited<ReturnType<StoreRemotePort["confirmQuestionSimulation"]>>;
+  },
+
+  async cancelQuestionSimulation(runId) {
+    const response = await fetch(`/api/question-simulations/${encodeURIComponent(runId)}`, { method: "DELETE" });
+    return readEntity(response, "run", "模拟生成批次放弃失败");
+  },
 };
 
 async function readEntity<T>(response: Response, field: string, fallback: string): Promise<T> {

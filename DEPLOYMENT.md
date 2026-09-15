@@ -1,11 +1,11 @@
 # 阿里云部署指南（小白版）
 
-本指南把 GEO_web 部署到阿里云 ECS，让网站 + 两个后台轮询 worker 一起稳定常驻运行。
+本指南把 GEO_web 部署到阿里云 ECS，让网站 + 四个后台轮询 worker 一起稳定常驻运行。
 按顺序照做即可，每一步都给了完整命令，能复制粘贴。
 
 > 本项目已为部署做好了准备：
 > - [next.config.ts](next.config.ts) 启用了 `output: "standalone"`，构建产物自包含、体积小。
-> - [ecosystem.config.cjs](ecosystem.config.cjs) 配好了 PM2 守护（web + 发布 worker + 检测 worker）。
+> - [ecosystem.config.cjs](ecosystem.config.cjs) 配好了 PM2 守护（web + 发布、检测、认知、问题模拟 worker）。
 > - [scripts/deploy-prepare.sh](scripts/deploy-prepare.sh) 一键完成「装依赖 → 构建 → 整理产物」。
 
 ---
@@ -32,7 +32,7 @@
 
 ## 1. 整体架构
 
-部署完成后，服务器上跑着 **3 个常驻进程**，由 PM2 守护，重启自动拉起：
+部署完成后，服务器上跑着 **5 个常驻进程**，由 PM2 守护，重启自动拉起：
 
 ```
                        ┌─────────────── 阿里云 ECS ───────────────┐
@@ -40,10 +40,13 @@
                        │   ├─ 反向代理到 127.0.0.1:3000             │
                        │   └─ 静态资源直发                          │
                        │                                           │
-                       │ PM2 守护 3 个进程：                        │
+                       │ PM2 守护 5 个进程：                        │
                        │   ├─ geo-web         (Next.js 服务, :3000) │
                        │   ├─ geo-publishing-worker (轮询发布任务)   │
-                       │   └─ geo-detection-worker  (轮询检测任务)   │
+                       │   ├─ geo-detection-worker  (轮询检测任务)   │
+                       │   ├─ geo-cognition-worker  (轮询认知任务)   │
+                       │   └─ geo-question-simulation-worker         │
+                       │                         (轮询问题模拟任务)   │
                        │                                           │
                        │ Supabase / 火山方舟 / 混元  ←── 走外网 API │
                        └───────────────────────────────────────────┘
@@ -52,8 +55,10 @@
 - **geo-web**：主网站，提供页面和 API，监听 127.0.0.1:3000（不直接对公网）。
 - **geo-publishing-worker**：死循环轮询 `POST /api/publishing/worker/run`，把待发布任务推到各平台。
 - **geo-detection-worker**：死循环轮询 `POST /api/detections/worker/run`，跑 AI 检测任务。
+- **geo-cognition-worker**：死循环轮询 `POST /api/cognition-runs/worker/run`，建立品牌和产品认知洞察。
+- **geo-question-simulation-worker**：死循环轮询 `POST /api/question-simulations/worker/run`，生成待客户审核的模拟问题。
 
-两个 worker 都是项目里自带的 [scripts/publishing-worker.mjs](scripts/publishing-worker.mjs) 和 [scripts/detection-worker.mjs](scripts/detection-worker.mjs)，必须和 web 一起常驻，否则发布和检测会卡住。
+四个 worker 都是项目自带的后台任务，必须和 web 一起常驻，否则对应的发布、检测、认知或问题模拟流程会停在排队状态。
 
 ---
 
@@ -77,7 +82,7 @@
 
 ### 规格
 
-这个项目跑 Next.js + 2 个 worker，**最低 2 核 4G**，推荐 **2 核 4G 起步**：
+这个项目跑 Next.js + 4 个轻量轮询 worker，**最低 2 核 4G**，推荐 **2 核 4G 起步**：
 
 | 配置 | 是否够用 | 说明 |
 |------|----------|------|
@@ -386,7 +391,7 @@ cd /opt/geo-web
 pm2 start ecosystem.config.cjs --env production
 ```
 
-会看到 PM2 列出 3 个进程：`geo-web`、`geo-publishing-worker`、`geo-detection-worker`，状态都是 `online`。
+会看到 PM2 列出 5 个进程：`geo-web`、`geo-publishing-worker`、`geo-detection-worker`、`geo-cognition-worker`、`geo-question-simulation-worker`，状态都是 `online`。
 
 ### 查看状态
 
@@ -394,6 +399,8 @@ pm2 start ecosystem.config.cjs --env production
 pm2 status                    # 总览
 pm2 logs geo-web              # 看 web 日志（Ctrl+C 退出）
 pm2 logs geo-publishing-worker   # 看发布 worker 日志
+pm2 logs geo-cognition-worker    # 看认知洞察 worker 日志
+pm2 logs geo-question-simulation-worker # 看问题模拟 worker 日志
 pm2 logs                      # 看所有日志
 ```
 
@@ -535,13 +542,13 @@ sudo certbot renew --dry-run
 
 浏览器访问 `https://你的域名.com`，能看到登录页。
 
-### 11.2 三个进程都在跑
+### 11.2 五个进程都在跑
 
 ```bash
 pm2 status
 ```
 
-三个进程都是 `online`，`restart` 列是 0 或小数字（频繁重启说明有问题）。
+五个进程都是 `online`，`restart` 列是 0 或小数字（频繁重启说明有问题）。
 
 ### 11.3 Supabase 连通
 
@@ -557,9 +564,11 @@ npm run supabase:verify
 ```bash
 pm2 logs geo-publishing-worker --lines 20
 pm2 logs geo-detection-worker --lines 20
+pm2 logs geo-cognition-worker --lines 20
+pm2 logs geo-question-simulation-worker --lines 20
 ```
 
-看到 `[publishing-worker] started as publishing-xxx` 和 `[detection-worker] started as detection-xxx` 就对了。没有任务时会每 3 秒空转一次，正常。
+看到四个 worker 各自的 `started as ...` 日志就对了。没有任务时会每 3 秒空转一次，正常。
 
 ### 11.5 健康检查接口
 
@@ -724,7 +733,7 @@ curl http://127.0.0.1:3000    # 本机通不通？
 
 ### 坑 7：定时任务
 
-本项目**不需要**额外配 cron。两个 worker 是死循环常驻进程，由 PM2 守护，本身就在持续轮询。
+本项目**不需要**额外配 cron。四个 worker 是死循环常驻进程，由 PM2 守护，本身就在持续轮询。
 
 如果你想加别的定时任务（比如每天清理日志）：
 
@@ -808,9 +817,11 @@ free -h
 | 文件 | 作用 |
 |------|------|
 | [next.config.ts](next.config.ts) | 启用 `output: "standalone"` |
-| [ecosystem.config.cjs](ecosystem.config.cjs) | PM2 守护配置（web + 2 worker） |
+| [ecosystem.config.cjs](ecosystem.config.cjs) | PM2 守护配置（web + 4 worker） |
 | [scripts/deploy-prepare.sh](scripts/deploy-prepare.sh) | 一键构建脚本 |
 | [scripts/publishing-worker.mjs](scripts/publishing-worker.mjs) | 发布轮询 worker |
 | [scripts/detection-worker.mjs](scripts/detection-worker.mjs) | 检测轮询 worker |
+| [scripts/cognition-worker.mjs](scripts/cognition-worker.mjs) | 认知洞察轮询 worker |
+| [scripts/question-simulation-worker.mjs](scripts/question-simulation-worker.mjs) | 用户问题模拟轮询 worker |
 | [.env.example](.env.example) | 环境变量模板（复制为 `.env.production`） |
 | [.gitignore](.gitignore) | 已排除 `deploy/`、`logs/`、`.env*` |

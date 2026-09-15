@@ -17,6 +17,14 @@ function createTestStore(overrides: Partial<StoreRemotePort> = {}) {
     getCognition: async () => undefined,
     retryCognition: async () => { throw new Error("未配置认知分析重试结果"); },
     confirmCognition: async () => { throw new Error("未配置认知确认结果"); },
+    addQuestion: async () => { throw new Error("未配置问题添加结果"); },
+    setQuestionEnabled: async () => { throw new Error("未配置问题状态结果"); },
+    deleteQuestion: async () => { throw new Error("未配置问题删除结果"); },
+    startQuestionSimulation: async () => { throw new Error("未配置问题模拟结果"); },
+    getQuestionSimulation: async () => undefined,
+    retryQuestionSimulation: async () => { throw new Error("未配置问题模拟重试结果"); },
+    confirmQuestionSimulation: async () => { throw new Error("未配置问题模拟确认结果"); },
+    cancelQuestionSimulation: async () => { throw new Error("未配置问题模拟放弃结果"); },
     ...overrides,
   };
   const dependencies: StoreDependencies = {
@@ -121,6 +129,46 @@ test("本地认知建立保持幂等，确认洞察不改写事实", async () =>
   store.getState().updateProduct(brandId, product.id, { limitations: "新增适用限制" });
   const updatedId = await store.getState().startCognition(brandId);
   expect(updatedId).not.toBe(firstId);
+});
+
+test("本地模拟器先审核再入库，并允许用户确认重复问题", async () => {
+  const { store } = createTestStore();
+  const brandId = store.getState().currentBrandId;
+  const cognitionId = await store.getState().startCognition(brandId);
+  const cognition = store.getState().cognitionRuns.find((item) => item.id === cognitionId)!;
+  await store.getState().confirmCognition(cognitionId, cognition.insights.map((insight) => ({
+    insightId: insight.id,
+    items: insight.items.map((item) => ({ key: item.key, conclusion: item.conclusion })),
+  })));
+
+  const simulationId = await store.getState().startQuestionSimulation({
+    brandId,
+    subjectType: "brand",
+    subjectId: brandId,
+    mode: "new_batch",
+  });
+  const repeatedId = await store.getState().startQuestionSimulation({
+    brandId,
+    subjectType: "brand",
+    subjectId: brandId,
+    mode: "new_batch",
+  });
+  expect(repeatedId).toBe(simulationId);
+  const simulation = store.getState().questionSimulationRuns[0];
+  expect(simulation.status).toBe("review_required");
+  expect(simulation.candidates).toHaveLength(12);
+
+  const first = simulation.candidates[0];
+  await store.getState().confirmQuestionSimulation(simulation.id, [
+    { id: first.id, text: first.text, persona: first.persona, decisionScenario: first.decisionScenario },
+    { id: "manual-duplicate", text: first.text, persona: first.persona, decisionScenario: first.decisionScenario },
+  ]);
+  const added = store.getState().brands.find((item) => item.id === brandId)!.questions.slice(0, 2);
+  expect(added).toHaveLength(2);
+  expect(added[0].text).toBe(added[1].text);
+  expect(added.map((item) => item.source)).toEqual(["simulator", "manual"]);
+  expect("cognitionInsightId" in added[0]).toBe(false);
+  expect(store.getState().questionSimulationRuns[0].status).toBe("confirmed");
 });
 
 test("品牌删除投影会同步清理所有关联领域数据", () => {

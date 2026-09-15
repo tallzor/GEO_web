@@ -8,6 +8,7 @@ export type FoundationTaskType =
   | "content_generation"
   | "content_review"
   | "question_generation"
+  | "question_simulation"
   | "brand_cognition"
   | "product_cognition";
 

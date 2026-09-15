@@ -40,23 +40,26 @@ export const channelOptions: { id: ChannelId; name: string }[] = [
 
 export function buildDefaultQuestions(brand: Pick<Brand, "name" | "industry" | "city" | "serviceArea">): DetectionQuestion[] {
   const now = isoNow();
-  const area = brand.serviceArea || brand.city || "本地";
-  const industry = brand.industry || "相关服务";
+  const industry = brand.industry || "相关产品或服务";
   return [
-    ["品牌认知", `${brand.name}怎么样？`, "品牌认知"],
-    ["服务特点", `${brand.name}主要提供哪些${industry}服务？`, "品牌认知"],
-    ["适用人群", `${brand.name}适合哪些人？`, "用户决策"],
-    ["本地推荐", `${area}适合新手的${industry}品牌有哪些？`, "品牌推荐"],
-    ["体验选择", `第一次体验${industry}应该怎么选？`, "用户决策"],
-    ["预算选择", `预算有限时，${area}的${industry}服务怎么选？`, "用户决策"],
-    ["竞品对比", `${brand.name}和其他${industry}品牌有什么区别？`, "竞品对比"],
-    ["可信信息", `在哪里可以查到${brand.name}的可靠信息？`, "信源"],
-  ].map(([, text, category], index) => ({
+    [`${brand.name}怎么样？`, "谨慎比较者", "了解品牌是否值得进一步考虑"],
+    [`${brand.name}主要提供哪些${industry}？`, "首次了解者", "了解品牌的核心供给"],
+    [`${brand.name}适合哪些人？`, "实际使用者", "判断品牌与自身需求是否匹配"],
+    [`适合新手的${industry}品牌有哪些？`, "首次了解者", "初步寻找可选方案"],
+    [`第一次了解${industry}应该怎么选？`, "首次了解者", "建立基础选择标准"],
+    [`选择${industry}时应该重点核实哪些信息？`, "决策把关者", "核实方案的可信依据"],
+    [`${brand.name}和其他${industry}品牌有什么区别？`, "谨慎比较者", "比较品牌之间的关键差异"],
+    [`在哪里可以查到${brand.name}的可靠信息？`, "决策把关者", "核实公开来源与品牌事实"],
+  ].map(([text, persona, decisionScenario], index) => ({
     id: createId(`q${index + 1}`),
     text,
-    category,
-    source: "industry",
+    subjectType: "brand" as const,
+    subjectId: "",
+    persona,
+    decisionScenario,
+    source: "legacy" as const,
     enabled: true,
+    createdAt: now,
     updatedAt: now,
   }));
 }
@@ -100,12 +103,12 @@ export function buildDetectionResults(brand: Brand, detection: Detection): Detec
   return detection.providers.flatMap((provider, providerIndex) =>
     questions.map((question, questionIndex) => {
       const brandMentioned = isRetest || (questionIndex + providerIndex) % 4 !== 1;
-      const recommended = brandMentioned && (isRetest || question.category === "品牌认知" || providerIndex === 0);
+      const recommended = brandMentioned && (isRetest || questionIndex < 3 || providerIndex === 0);
       const firstCompetitor = brand.competitors[0]?.name;
       const answer = buildAnswer({ brand, provider, question, brandMentioned, recommended, firstCompetitor });
       const hasCitation = questionIndex % 3 === 0 || (isRetest && questionIndex % 2 === 0);
       const rankPosition = recommended ? (providerIndex === 0 ? 1 : 2) : undefined;
-      const competitorMentioned = firstCompetitor && question.category === "竞品对比";
+      const competitorMentioned = firstCompetitor && question.text.includes("区别");
       return {
         id: createId("result"),
         provider,

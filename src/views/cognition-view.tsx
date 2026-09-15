@@ -3,6 +3,7 @@
 import { AlertTriangle, BrainCircuit, CheckCircle2, ExternalLink, LoaderCircle, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAccountContext } from "@/components/auth-context";
 import { ModuleNav } from "@/components/module-nav";
 import { Badge, Button, Card, EmptyState, PageHeader, Progress, Toast } from "@/components/ui";
@@ -170,7 +171,7 @@ export function CognitionView({ runId }: { runId?: string }) {
       />
       {!checked.ready && <div className="cognition-issues">{checked.issues.map((issue) => <span key={`${issue.path}-${issue.message}`}>{issue.message}</span>)}</div>}
     </Card> : <>
-      <Card className="cognition-status-card" title={<span className="cognition-status-title">本次认知建立 <Badge tone={statusMeta[run.status].tone}>{statusMeta[run.status].label}</Badge></span>} description={`基于创建时的品牌与产品事实快照 · 第 ${run.attempt || 1} 次尝试`} action={run.status === "failed" && owner ? <Button disabled={submitting} onClick={() => void retry()}><RefreshCw size={15} />重新分析</Button> : run.status === "confirmed" && factsChanged && owner ? <Button variant="primary" disabled={submitting || !checked.ready} onClick={() => void begin()}><RefreshCw size={15} />更新洞察</Button> : undefined}>
+      <Card className="cognition-status-card" title={<span className="cognition-status-title">本次认知建立 <Badge tone={statusMeta[run.status].tone}>{statusMeta[run.status].label}</Badge></span>} description={`基于创建时的品牌与产品事实快照 · 第 ${run.attempt || 1} 次尝试`} action={run.status === "failed" && owner ? <Button disabled={submitting} onClick={() => void retry()}><RefreshCw size={15} />重新分析</Button> : run.status === "confirmed" ? <div className="table-row-action">{factsChanged && owner && <Button disabled={submitting || !checked.ready} onClick={() => void begin()}><RefreshCw size={15} />更新洞察</Button>}<Link className="btn btn-primary btn-sm" href={`/geo/questions/generate?subjectType=brand&subjectId=${brand.id}`}>模拟品牌问题</Link></div> : undefined}>
         <Progress value={statusMeta[run.status].progress} success={run.status === "confirmed"} />
         {(run.status === "queued" || run.status === "analyzing") && <p className="secondary cognition-status-copy">后台正在根据事实档案建立品牌和产品认知，页面会自动更新。</p>}
         {run.status === "review_required" && <div className="notice notice-warning">请统一审核全部品牌与产品洞察。你可以修改 AI 结论；修改只写入认知洞察，不会改动事实档案。</div>}
@@ -183,7 +184,7 @@ export function CognitionView({ runId }: { runId?: string }) {
           key={insight.id}
           title={`${insight.subjectType === "brand" ? "品牌" : "产品 / 服务"} · ${insight.subjectName}`}
           description={insight.modelType === "brand_six_elements" ? "品牌认知六要素" : "BFABEWW（Base 仅作输入预检，不单独输出）"}
-          action={<Badge tone={insight.status === "confirmed" ? "success" : "warning"}>{insight.status === "confirmed" ? `认知基准 v${insight.version}` : "待审核"}</Badge>}
+          action={<div className="table-row-action"><Badge tone={insight.status === "confirmed" ? "success" : "warning"}>{insight.status === "confirmed" ? `认知基准 v${insight.version}` : "待审核"}</Badge>{insight.status === "confirmed" && <Link className="btn btn-sm" href={`/geo/questions/generate?subjectType=${insight.subjectType}&subjectId=${insight.subjectId}`}>生成该对象问题</Link>}</div>}
         >
           <div className="cognition-item-list">
             {insight.items.map((item) => <section className="cognition-item" key={item.key}>

@@ -258,6 +258,9 @@ function matchesGuard(task: ServerDetectionTask, guard?: DetectionTaskUpdateGuar
 
 export function makeServerDetectionTask(input: {
   id: string;
+  subjectType: "brand" | "product";
+  subjectId: string;
+  subjectName: string;
   brand: DetectionTaskBrand;
   questions: DetectionTaskQuestion[];
   providers: ProviderId[];
@@ -274,6 +277,9 @@ export function makeServerDetectionTask(input: {
     organizationId: input.organizationId,
     createdBy: input.createdBy,
     brandId: input.brand.id,
+    subjectType: input.subjectType,
+    subjectId: input.subjectId,
+    subjectName: input.subjectName,
     name: input.sourceDetectionId ? "GEO复测" : "GEO检测",
     status: "pending",
     stage: "queued",

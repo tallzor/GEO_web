@@ -15,6 +15,9 @@ import type {
   ProductService,
   ProviderErrorCategory,
   ProviderId,
+  QuestionCandidateReview,
+  QuestionSimulationMode,
+  QuestionSimulationRun,
   PublishBatch,
   PublishRecord,
   PublishingPlatform,
@@ -94,16 +97,28 @@ export type BrandSlice = {
   addKnowledge: (brandId: string, attachment: Omit<KnowledgeAttachment, "id" | "uploadedAt">) => string;
   updateKnowledgeStatus: (brandId: string, attachmentId: string, status: KnowledgeAttachment["status"], error?: string) => void;
   deleteKnowledge: (brandId: string, attachmentId: string) => void;
-  addQuestion: (brandId: string, text: string, category: string) => void;
-  updateQuestion: (brandId: string, questionId: string, patch: Partial<Brand["questions"][number]>) => void;
-  deleteQuestion: (brandId: string, questionId: string) => void;
-  addGeneratedQuestions: (brandId: string, questions: string[]) => string[];
-  mergePersistedQuestions: (brandId: string, questions: DetectionQuestion[], generatedAt: string) => string[];
+  addQuestion: (input: {
+    brandId: string;
+    subjectType: "brand" | "product";
+    subjectId: string;
+    text: string;
+    persona: string;
+    decisionScenario: string;
+  }) => Promise<string>;
+  setQuestionEnabled: (brandId: string, questionId: string, enabled: boolean) => Promise<void>;
+  deleteQuestion: (brandId: string, questionId: string) => Promise<void>;
+  mergeQuestionLibrary: (brandId: string, questions: DetectionQuestion[]) => void;
 };
 
 export type DetectionSlice = {
   detections: Detection[];
-  startDetection: (brandId: string, providers: ProviderId[], questionIds: string[], sourceDetectionId?: string) => string;
+  startDetection: (
+    brandId: string,
+    target: { subjectType: "brand" | "product"; subjectId: string; subjectName: string },
+    providers: ProviderId[],
+    questionIds: string[],
+    sourceDetectionId?: string,
+  ) => string;
   advanceDetection: (detectionId: string) => void;
   advanceLiveDetectionStep: (detectionId: string) => void;
   appendDetectionResult: (detectionId: string, result: DetectionResult) => void;
@@ -145,7 +160,26 @@ export type CognitionSlice = {
   confirmCognition: (runId: string, revisions: CognitionInsightRevision[]) => Promise<void>;
 };
 
-export type AppStore = WorkspaceSlice & BrandSlice & DetectionSlice & OptimizationSlice & CognitionSlice;
+export type QuestionSimulationSlice = {
+  questionSimulationRuns: QuestionSimulationRun[];
+  startQuestionSimulation: (input: {
+    brandId: string;
+    subjectType: "brand" | "product";
+    subjectId: string;
+    mode: QuestionSimulationMode;
+  }) => Promise<string>;
+  loadQuestionSimulation: (input: {
+    runId?: string;
+    brandId?: string;
+    subjectType?: "brand" | "product";
+    subjectId?: string;
+  }) => Promise<QuestionSimulationRun | undefined>;
+  retryQuestionSimulation: (runId: string) => Promise<void>;
+  confirmQuestionSimulation: (runId: string, questions: QuestionCandidateReview[]) => Promise<void>;
+  cancelQuestionSimulation: (runId: string) => Promise<void>;
+};
+
+export type AppStore = WorkspaceSlice & BrandSlice & DetectionSlice & OptimizationSlice & CognitionSlice & QuestionSimulationSlice;
 
 export type ContentGenerationInput = {
   cycleId: string;
@@ -162,6 +196,14 @@ export type StoreRemotePort = {
   getCognition: (input: { runId?: string; brandId?: string }) => Promise<CognitionRun | undefined>;
   retryCognition: (runId: string) => Promise<CognitionRun>;
   confirmCognition: (runId: string, revisions: CognitionInsightRevision[]) => Promise<CognitionRun>;
+  addQuestion: (input: Parameters<BrandSlice["addQuestion"]>[0]) => Promise<DetectionQuestion>;
+  setQuestionEnabled: (questionId: string, enabled: boolean) => Promise<DetectionQuestion>;
+  deleteQuestion: (questionId: string) => Promise<void>;
+  startQuestionSimulation: (input: Parameters<QuestionSimulationSlice["startQuestionSimulation"]>[0]) => Promise<QuestionSimulationRun>;
+  getQuestionSimulation: (input: Parameters<QuestionSimulationSlice["loadQuestionSimulation"]>[0]) => Promise<QuestionSimulationRun | undefined>;
+  retryQuestionSimulation: (runId: string) => Promise<QuestionSimulationRun>;
+  confirmQuestionSimulation: (runId: string, questions: QuestionCandidateReview[]) => Promise<{ run: QuestionSimulationRun; questions: DetectionQuestion[] }>;
+  cancelQuestionSimulation: (runId: string) => Promise<QuestionSimulationRun>;
 };
 
 export type StoreDependencies = {

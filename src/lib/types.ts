@@ -82,9 +82,13 @@ export type KnowledgeAttachment = {
 export type DetectionQuestion = {
   id: Id;
   text: string;
-  source: "industry" | "generated" | "custom";
-  category: string;
+  subjectType: "brand" | "product";
+  subjectId: Id;
+  persona: string;
+  decisionScenario: string;
+  source: "simulator" | "manual" | "legacy";
   enabled: boolean;
+  createdAt: string;
   updatedAt: string;
 };
 
@@ -235,6 +239,80 @@ export type CognitionInsightRevision = {
   items: Array<{ key: string; conclusion: string }>;
 };
 
+export type QuestionSimulationMode = "initial" | "supplement" | "new_batch";
+
+export type QuestionSimulationStatus =
+  | "queued"
+  | "generating"
+  | "review_required"
+  | "confirmed"
+  | "failed"
+  | "cancelled";
+
+export type QuestionSimulationStage =
+  | "persona"
+  | "planning"
+  | "questions"
+  | "validation";
+
+export type QuestionPersona = {
+  id: Id;
+  name: string;
+  audience: string;
+  knowledgeLevel: string;
+  decisionScenario: string;
+  task: string;
+  concern: string;
+  constraints: string;
+  decisionStage: string;
+};
+
+export type QuestionCandidate = {
+  id: Id;
+  runId: Id;
+  text: string;
+  persona: string;
+  decisionScenario: string;
+  createdAt: string;
+};
+
+export type QuestionSimulationRun = {
+  id: Id;
+  brandId: Id;
+  subjectType: "brand" | "product";
+  subjectId: Id;
+  subjectName: string;
+  cognitionInsightId: Id;
+  cognitionVersion: number;
+  mode: QuestionSimulationMode;
+  status: QuestionSimulationStatus;
+  stage?: QuestionSimulationStage;
+  personas: QuestionPersona[];
+  candidates: QuestionCandidate[];
+  coverageGaps: string[];
+  externalReferences: CognitionReference[];
+  attempt: number;
+  error?: string;
+  retryable?: boolean;
+  model?: string;
+  promptVersion: string;
+  generatedCount: number;
+  adoptedCount: number;
+  deletedCount: number;
+  editedCount: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  confirmedAt?: string;
+};
+
+export type QuestionCandidateReview = {
+  id: Id;
+  text: string;
+  persona: string;
+  decisionScenario: string;
+};
+
 export type Citation = {
   id: Id;
   title: string;
@@ -363,6 +441,9 @@ export type Diagnosis = {
 export type Detection = {
   id: Id;
   brandId: Id;
+  subjectType?: "brand" | "product";
+  subjectId?: Id;
+  subjectName?: string;
   name: string;
   status: "pending" | "running" | "partial" | "completed" | "failed";
   providers: ProviderId[];

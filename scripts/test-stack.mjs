@@ -35,10 +35,14 @@ const web = spawn(process.execPath, [
   String(port),
 ], { env, stdio: "inherit" });
 
-const worker = spawn(process.execPath, [path.resolve("scripts/detection-worker.mjs")], {
+const workers = [
+  "scripts/detection-worker.mjs",
+  "scripts/cognition-worker.mjs",
+  "scripts/question-simulation-worker.mjs",
+].map((script) => spawn(process.execPath, [path.resolve(script)], {
   env,
   stdio: "inherit",
-});
+}));
 
 let shuttingDown = false;
 
@@ -46,7 +50,7 @@ function shutdown(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   web.kill();
-  worker.kill();
+  workers.forEach((worker) => worker.kill());
   setTimeout(() => process.exit(exitCode), 250).unref();
 }
 
@@ -57,12 +61,12 @@ web.on("exit", (code, signal) => {
   }
 });
 
-worker.on("exit", (code, signal) => {
-  if (!shuttingDown) {
-    console.error(`[test-stack] 检测 Worker 退出：${signal || code || 0}`);
-    shutdown(code || 1);
-  }
-});
+workers.forEach((worker) => worker.on("exit", (code, signal) => {
+    if (!shuttingDown) {
+      console.error(`[test-stack] Worker 退出：${signal || code || 0}`);
+      shutdown(code || 1);
+    }
+  }));
 
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));

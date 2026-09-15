@@ -9,6 +9,7 @@
     "worker:publishing": "node --env-file-if-exists=.env.local scripts/publishing-worker.mjs",
     "worker:detection": "node --env-file-if-exists=.env.local scripts/detection-worker.mjs",
     "worker:cognition": "node --env-file-if-exists=.env.local scripts/cognition-worker.mjs",
+    "worker:questions": "node --env-file-if-exists=.env.local scripts/question-simulation-worker.mjs",
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
     "test:e2e": "npm run test:e2e:real",

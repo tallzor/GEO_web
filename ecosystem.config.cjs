@@ -1,4 +1,4 @@
-// PM2 进程守护配置：web 服务 + 发布轮询 worker + 检测轮询 worker。
+// PM2 进程守护配置：web 服务 + 发布、检测、认知、问题模拟轮询 worker。
 // 用法：
 //   pm2 start ecosystem.config.cjs --env production
 //   pm2 save                      # 保存进程列表，开机自启时用
@@ -71,6 +71,44 @@ module.exports = {
       max_memory_restart: "300M",
       error_file: "./logs/pm2-detection-worker-err.log",
       out_file: "./logs/pm2-detection-worker-out.log",
+      merge_logs: true,
+      time: true,
+    },
+    {
+      name: "geo-cognition-worker",
+      script: "scripts/cognition-worker.mjs",
+      cwd: PROJECT_ROOT,
+      env_file: ENV_FILE,
+      env: {
+        NODE_ENV: "production",
+      },
+      instances: 1,
+      exec_mode: "fork",
+      autorestart: true,
+      max_restarts: 20,
+      restart_delay: 5000,
+      max_memory_restart: "300M",
+      error_file: "./logs/pm2-cognition-worker-err.log",
+      out_file: "./logs/pm2-cognition-worker-out.log",
+      merge_logs: true,
+      time: true,
+    },
+    {
+      name: "geo-question-simulation-worker",
+      script: "scripts/question-simulation-worker.mjs",
+      cwd: PROJECT_ROOT,
+      env_file: ENV_FILE,
+      env: {
+        NODE_ENV: "production",
+      },
+      instances: 1,
+      exec_mode: "fork",
+      autorestart: true,
+      max_restarts: 20,
+      restart_delay: 5000,
+      max_memory_restart: "300M",
+      error_file: "./logs/pm2-question-simulation-worker-err.log",
+      out_file: "./logs/pm2-question-simulation-worker-out.log",
       merge_logs: true,
       time: true,
     },

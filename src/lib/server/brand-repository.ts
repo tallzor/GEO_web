@@ -1,10 +1,9 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
 import { assertWorkspaceOwner } from "@/lib/auth/workspace-permissions";
 import type { AccountContext } from "@/lib/auth/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import type { Brand, DetectionQuestion } from "@/lib/types";
+import type { Brand } from "@/lib/types";
 import { WorkspaceAccessError } from "@/lib/server/workspace-access";
 import { assertUuid } from "@/lib/server/workspace-write-rules";
 
@@ -94,7 +93,15 @@ export async function saveBrandSnapshots(account: AccountContext, brands: Brand[
       }))),
       syncQuestionRows(supabase, organizationId, brand.id, brand.questions.map((item) => ({
         id: item.id, organization_id: organizationId, brand_id: brand.id, text: item.text,
-        source: item.source, category: item.category || null, enabled: item.enabled, updated_at: item.updatedAt,
+        subject_type: item.subjectType,
+        product_id: item.subjectType === "product" ? item.subjectId : null,
+        persona: item.persona,
+        decision_scenario: item.decisionScenario,
+        source: item.source,
+        enabled: item.enabled,
+        created_by: account.userId,
+        created_at: item.createdAt,
+        updated_at: item.updatedAt,
       }))),
     ]);
   }
@@ -182,69 +189,6 @@ export async function deleteBrandKnowledgeFile(account: AccountContext, attachme
   if (!deleted.data) throw new Error("附件删除未生效，请刷新后重试");
 }
 
-export async function saveGeneratedBrandQuestions(account: AccountContext, input: {
-  brandId: string;
-  texts: string[];
-  generatedAt: string;
-  promptVersion: string;
-}): Promise<DetectionQuestion[]> {
-  const organizationId = requireOrganization(account);
-  assertUuid(input.brandId, "品牌ID");
-  const generatedTexts = [...new Set(input.texts.map((item) => item.trim()).filter(Boolean))];
-  if (!generatedTexts.length) throw new Error("没有可保存的检测问题");
-  const supabase = createSupabaseAdminClient();
-  await assertActiveBrand(supabase, organizationId, input.brandId);
-
-  const existingResult = await supabase.from("detection_questions")
-    .select("id,text,source,category,enabled,updated_at")
-    .eq("organization_id", organizationId)
-    .eq("brand_id", input.brandId);
-  if (existingResult.error) throw new Error(existingResult.error.message);
-  const existingByText = new Map(rows(existingResult.data).map((row) => [text(row.text).trim(), row]));
-  const questions = generatedTexts.map((questionText): DetectionQuestion => {
-    const existing = existingByText.get(questionText);
-    return existing ? {
-      id: text(existing.id),
-      text: questionText,
-      source: normalizeQuestionSource(existing.source),
-      category: text(existing.category),
-      enabled: true,
-      updatedAt: input.generatedAt,
-    } : {
-      id: randomUUID(),
-      text: questionText,
-      source: "generated",
-      category: "",
-      enabled: true,
-      updatedAt: input.generatedAt,
-    };
-  });
-  await assertIdsOwned(supabase, "detection_questions", organizationId, questions.map((question) => question.id));
-
-  const saveQuestions = await supabase.from("detection_questions").upsert(questions.map((question) => ({
-    id: question.id,
-    organization_id: organizationId,
-    brand_id: input.brandId,
-    text: question.text,
-    source: question.source,
-    category: question.category || null,
-    enabled: true,
-    prompt_version: input.promptVersion,
-    updated_at: input.generatedAt,
-  })), { onConflict: "id" });
-  if (saveQuestions.error) throw new Error(saveQuestions.error.message);
-
-  const saveBrand = await supabase.from("brands").update({
-    questions_generated_at: input.generatedAt,
-    updated_at: input.generatedAt,
-    updated_by: account.userId,
-  }).eq("organization_id", organizationId).eq("id", input.brandId).is("deleted_at", null)
-    .select("id").maybeSingle();
-  if (saveBrand.error) throw new Error(saveBrand.error.message);
-  if (!saveBrand.data) throw new Error("品牌问题生成状态保存未生效");
-  return questions;
-}
-
 async function assertBrandWriteOwnership(supabase: SupabaseAdmin, organizationId: string, brands: Brand[]) {
   const checks: Array<[string, string[]]> = [
     ["brands", brands.map((item) => item.id)],
@@ -322,15 +266,8 @@ async function syncQuestionRows(
   values: Record<string, unknown>[],
 ) {
   await upsertOrThrow(supabase, "detection_questions", values);
-  const { data, error } = await supabase.from("detection_questions").select("id")
-    .eq("organization_id", organizationId).eq("brand_id", brandId).eq("enabled", true);
-  if (error) throw new Error(error.message);
-  const desired = new Set(values.map((item) => text(item.id)));
-  const stale = rows(data).map((item) => text(item.id)).filter((id) => !desired.has(id));
-  if (!stale.length) return;
-  const disabled = await supabase.from("detection_questions").update({ enabled: false })
-    .eq("organization_id", organizationId).in("id", stale);
-  if (disabled.error) throw new Error(disabled.error.message);
+  void organizationId;
+  void brandId;
 }
 
 function requireOrganization(account: AccountContext) {
@@ -344,10 +281,6 @@ function rows(value: unknown): Row[] {
 
 function text(value: unknown) {
   return typeof value === "string" ? value : "";
-}
-
-function normalizeQuestionSource(value: unknown): DetectionQuestion["source"] {
-  return value === "industry" || value === "custom" ? value : "generated";
 }
 
 function safeObjectName(fileName: string) {

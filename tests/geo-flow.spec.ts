@@ -159,7 +159,7 @@ test("旧演示发布数据升级时清除无效记录和平台状态", async ({
   await page.waitForLoadState("networkidle");
   const migrated = await page.evaluate(() => JSON.parse(localStorage.getItem("geo-web-demo-v3") || "{}"));
 
-  expect(migrated.version).toBe(5);
+  expect(migrated.version).toBe(6);
   expect(migrated.state.publishBatches).toEqual([]);
   expect(migrated.state.publishRecords).toEqual([]);
   expect(migrated.state.platforms).toEqual([]);
@@ -200,6 +200,18 @@ test("v0.3.0：从品牌事实输入到一次确认认知洞察", async ({ page 
     return brands?.find((brand) => brand.name === "清衡食品")?.products[0]?.advantages;
   });
   expect(savedAdvantage).toBe("比常规含糖茶饮糖分更低");
+
+  await page.getByRole("link", { name: "模拟品牌问题" }).click();
+  await expect(page.getByRole("heading", { name: "用户问题模拟器" })).toBeVisible();
+  await page.getByRole("button", { name: "开始模拟" }).click();
+  await expect(page.getByText(/候选问题审核 · 12 道/)).toBeVisible();
+  const candidateEditors = page.locator(".question-candidate textarea");
+  await candidateEditors.first().fill(await candidateEditors.nth(1).inputValue());
+  await expect(page.getByText(/疑似重复/)).toBeVisible();
+  await page.getByRole("button", { name: /确认 12 道并加入问题库/ }).click();
+  await expect(page).toHaveURL(/geo\/questions/);
+  await expect(page.getByRole("button", { name: "永久删除问题" }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /编辑/ })).toHaveCount(0);
 
   await page.goto("/brand/products");
   await page.getByRole("button", { name: "编辑" }).click();

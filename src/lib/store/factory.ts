@@ -6,6 +6,7 @@ import type { AppStore, StoreDependencies } from "@/lib/store/contracts";
 import { createDetectionSlice } from "@/lib/store/detection-slice";
 import { createOptimizationSlice } from "@/lib/store/optimization-slice";
 import { createWorkspaceSlice } from "@/lib/store/workspace-slice";
+import { createQuestionSimulationSlice } from "@/lib/store/question-simulation-slice";
 
 /** 组合领域 slice；测试与浏览器 Store 共用同一 interface。 */
 export function createAppStoreState(
@@ -17,11 +18,13 @@ export function createAppStoreState(
   const detectionSlice = createDetectionSlice(initial, dependencies);
   const optimizationSlice = createOptimizationSlice(initial, dependencies);
   const cognitionSlice = createCognitionSlice(dependencies);
+  const questionSimulationSlice = createQuestionSimulationSlice(dependencies);
   return (set, get, store) => ({
     ...workspaceSlice(set, get, store),
     ...brandSlice(set, get, store),
     ...detectionSlice(set, get, store),
     ...optimizationSlice(set, get, store),
     ...cognitionSlice(set, get, store),
+    ...questionSimulationSlice(set, get, store),
   });
 }

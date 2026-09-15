@@ -28,10 +28,10 @@ export const useAppStore = create<AppStore>()(
     createAppStoreState(initial, dependencies),
     {
       name: "geo-web-demo-v3",
-      version: 5,
+      version: 6,
       migrate: (persistedState, version) => {
         const state = persistedState as Partial<AppStore>;
-        if (version >= 5) return state as AppStore;
+        if (version >= 6) return state as AppStore;
         const cycleIds = new Set((state.cycles || []).map((cycle) => cycle.id));
         const taskIds = new Set((state.cycles || []).flatMap((cycle) => cycle.tasks.map((task) => task.id)));
         const contentIds = new Set((state.contents || []).map((content) => content.id));
@@ -60,6 +60,20 @@ export const useAppStore = create<AppStore>()(
               ...attachment,
               status: attachment.status === "failed" ? "failed" as const : "uploaded" as const,
             })),
+            questions: brand.questions.map((question) => ({
+              id: question.id,
+              text: question.text,
+              subjectType: question.subjectType || "brand" as const,
+              subjectId: question.subjectId || brand.id,
+              persona: question.persona || "旧数据迁移",
+              decisionScenario: question.decisionScenario || "历史检测场景",
+              source: question.source === "simulator" || question.source === "manual"
+                ? question.source
+                : "legacy" as const,
+              enabled: question.enabled,
+              createdAt: question.createdAt || question.updatedAt,
+              updatedAt: question.updatedAt,
+            })),
           })),
           publishBatches: version >= 4 ? state.publishBatches || [] : [],
           publishRecords: (state.publishRecords || []).filter((record) => (
@@ -69,6 +83,7 @@ export const useAppStore = create<AppStore>()(
           )),
           platforms: version >= 4 ? state.platforms || [] : [],
           cognitionRuns: [],
+          questionSimulationRuns: [],
         } as AppStore;
       },
       partialize: (state) => ({
@@ -84,6 +99,7 @@ export const useAppStore = create<AppStore>()(
           publishRecords: state.publishRecords,
           platforms: state.platforms,
           cognitionRuns: state.cognitionRuns,
+          questionSimulationRuns: state.questionSimulationRuns,
         } : {}),
       }),
       onRehydrateStorage: () => (state) => state?.setHydrated(true),

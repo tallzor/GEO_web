@@ -2,6 +2,7 @@ import type { SeedData } from "@/lib/seed";
 import type { AppSliceCreator, BrandSlice, StoreDependencies } from "@/lib/store/contracts";
 import type { Brand } from "@/lib/types";
 import { createId, isoNow } from "@/lib/utils";
+import { QUESTION_LIBRARY_LIMIT, validateReviewedCandidates } from "@/lib/question-simulator";
 
 const questionContextFields: ReadonlyArray<keyof Brand> = [
   "name",
@@ -82,6 +83,7 @@ export function createBrandSlice(
         publishRecords: state.publishRecords.filter((record) => record.brandId !== brandId),
         platforms: state.platforms.filter((platform) => platform.brandId !== brandId),
         cognitionRuns: state.cognitionRuns.filter((run) => run.brandId !== brandId),
+        questionSimulationRuns: state.questionSimulationRuns.filter((run) => run.brandId !== brandId),
       };
     }),
     updateBrand: (brandId, patch) => set((state) => {
@@ -179,77 +181,62 @@ export function createBrandSlice(
         }));
       });
     },
-    addQuestion: (brandId, text, category) => set((state) => ({
-      brands: state.brands.map((brand) => brand.id === brandId ? {
-        ...brand,
-        questions: [...brand.questions, {
-          id: createId("question"),
-          text,
-          category,
-          source: "custom",
-          enabled: true,
-          updatedAt: isoNow(),
-        }],
-      } : brand),
-    })),
-    updateQuestion: (brandId, questionId, patch) => set((state) => ({
-      brands: state.brands.map((brand) => brand.id === brandId ? {
-        ...brand,
-        questions: brand.questions.map((item) => item.id === questionId
-          ? { ...item, ...patch, updatedAt: isoNow() }
-          : item),
-      } : brand),
-    })),
-    deleteQuestion: (brandId, questionId) => set((state) => ({
-      brands: state.brands.map((brand) => brand.id === brandId ? {
-        ...brand,
-        questions: brand.questions.filter((item) => item.id !== questionId),
-      } : brand),
-    })),
-    addGeneratedQuestions: (brandId, questionTexts) => {
+    addQuestion: async (input) => {
+      const state = get();
+      const brand = state.brands.find((item) => item.id === input.brandId);
+      if (!brand) throw new Error("品牌不存在");
+      const [validated] = validateReviewedCandidates([input]);
+      if (brand.questions.length >= QUESTION_LIBRARY_LIMIT) throw new Error("问题库已达240道上限，请先删除旧问题");
       const now = isoNow();
-      const ids: string[] = [];
-      set((state) => ({
-        brands: state.brands.map((brand) => {
-          if (brand.id !== brandId) return brand;
-          const existing = new Set(brand.questions.map((item) => item.text.trim()));
-          const additions = questionTexts.flatMap((text) => {
-            const normalized = text.trim();
-            if (!normalized || existing.has(normalized)) return [];
-            existing.add(normalized);
-            const id = createId("question");
-            ids.push(id);
-            return [{ id, text: normalized, source: "generated" as const, category: "", enabled: true, updatedAt: now }];
-          });
-          return {
-            ...brand,
-            questions: [...brand.questions, ...additions],
-            questionsGeneratedAt: now,
+      const question = state.dataMode === "supabase"
+        ? await dependencies.remote.addQuestion(input)
+        : {
+            id: createId("question"),
+            text: validated.text,
+            subjectType: input.subjectType,
+            subjectId: input.subjectId,
+            persona: validated.persona,
+            decisionScenario: validated.decisionScenario,
+            source: "manual" as const,
+            enabled: true,
+            createdAt: now,
             updatedAt: now,
           };
-        }),
+      dependencies.applyPersistedProjection(state.dataMode, () => set((current) => ({
+        brands: current.brands.map((item) => item.id === input.brandId
+          ? { ...item, questions: [question, ...item.questions] }
+          : item),
+      })));
+      return question.id;
+    },
+    setQuestionEnabled: async (brandId, questionId, enabled) => {
+      const state = get();
+      const question = state.dataMode === "supabase"
+        ? await dependencies.remote.setQuestionEnabled(questionId, enabled)
+        : undefined;
+      dependencies.applyPersistedProjection(state.dataMode, () => set((current) => ({
+        brands: current.brands.map((brand) => brand.id === brandId ? {
+          ...brand,
+          questions: brand.questions.map((item) => item.id === questionId
+            ? question || { ...item, enabled, updatedAt: isoNow() }
+            : item),
+        } : brand),
+      })));
+    },
+    deleteQuestion: async (brandId, questionId) => {
+      const state = get();
+      if (state.dataMode === "supabase") await dependencies.remote.deleteQuestion(questionId);
+      dependencies.applyPersistedProjection(state.dataMode, () => set((current) => ({
+        brands: current.brands.map((brand) => brand.id === brandId ? {
+          ...brand,
+          questions: brand.questions.filter((item) => item.id !== questionId),
+        } : brand),
+      })));
+    },
+    mergeQuestionLibrary: (brandId, questions) => dependencies.applyPersistedProjection(get().dataMode, () => {
+      set((state) => ({
+        brands: state.brands.map((brand) => brand.id === brandId ? { ...brand, questions } : brand),
       }));
-      return ids;
-    },
-    mergePersistedQuestions: (brandId, questions, generatedAt) => {
-      const ids = questions.map((question) => question.id);
-      dependencies.applyPersistedProjection(get().dataMode, () => {
-        set((state) => ({
-          brands: state.brands.map((brand) => {
-            if (brand.id !== brandId) return brand;
-            const incoming = new Map(questions.map((question) => [question.id, question]));
-            const merged = brand.questions.map((question) => incoming.get(question.id) || question);
-            const knownIds = new Set(brand.questions.map((question) => question.id));
-            return {
-              ...brand,
-              questions: [...merged, ...questions.filter((question) => !knownIds.has(question.id))],
-              questionsGeneratedAt: generatedAt,
-              updatedAt: generatedAt,
-            };
-          }),
-        }));
-      });
-      return ids;
-    },
+    }),
   });
 }

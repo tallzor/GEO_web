@@ -10,13 +10,14 @@ export function createDetectionSlice(
 ): AppSliceCreator<DetectionSlice> {
   return (set, get) => ({
     detections: initial.detections,
-    startDetection: (brandId, providers, questionIds, sourceDetectionId) => {
+    startDetection: (brandId, target, providers, questionIds, sourceDetectionId) => {
       const id = createId("detection");
       const usesLiveProvider = providers.length > 0
         && providers.every((provider) => provider === "doubao" || provider === "deepseek" || provider === "yuanbao");
       const detection: Detection = {
         id,
         brandId,
+        ...target,
         name: sourceDetectionId ? "GEO复测" : "GEO检测",
         status: usesLiveProvider ? "pending" : "running",
         providers,

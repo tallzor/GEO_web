@@ -157,14 +157,23 @@ export async function loadWorkspaceSnapshot(account: AccountContext): Promise<Wo
         uploadedBy: optionalText(item.uploaded_by_name),
         error: optionalText(item.error),
       })),
-      questions: sortedRows(row.questions, "updated_at", true).filter((item) => item.enabled !== false).map((item) => ({
+      questions: sortedRows(row.questions, "updated_at", true).map((item) => {
+        const subjectType = text(item.subject_type) === "product" ? "product" as const : "brand" as const;
+        return {
         id: text(item.id),
         text: text(item.text),
-        source: text(item.source) as Brand["questions"][number]["source"],
-        category: text(item.category),
+        subjectType,
+        subjectId: subjectType === "product" ? text(item.product_id) : id,
+        persona: text(item.persona) || "旧数据迁移",
+        decisionScenario: text(item.decision_scenario) || "历史检测场景",
+        source: text(item.source) === "simulator" || text(item.source) === "manual"
+          ? text(item.source) as "simulator" | "manual"
+          : "legacy" as const,
         enabled: item.enabled !== false,
+        createdAt: text(item.created_at) || text(item.updated_at),
         updatedAt: text(item.updated_at),
-      })),
+      };
+      }),
       questionContextUpdatedAt: optionalText(row.question_context_updated_at),
       questionsGeneratedAt: optionalText(row.questions_generated_at),
       createdAt: text(row.created_at),

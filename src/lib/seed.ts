@@ -101,6 +101,7 @@ export function createSeedData(): SeedData {
     updatedAt: "2026-07-20T08:00:00.000Z",
   };
   baseBrand.questions = buildDefaultQuestions(baseBrand);
+  baseBrand.questions = baseBrand.questions.map((question) => ({ ...question, subjectId: baseBrand.id }));
 
   const previous: Detection = {
     id: "detection_previous",

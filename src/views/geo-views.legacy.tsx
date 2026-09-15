@@ -5,7 +5,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, Info, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Info, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ModuleNav } from "@/components/module-nav";
 import { Badge, Button, Card, EmptyState, Field, Modal, PageHeader, Progress } from "@/components/ui";
@@ -74,60 +74,100 @@ function ProviderPerformance({ detection }: { detection: Detection }) {
 export function QuestionsView() {
   const brand = useAppStore(currentBrand)!;
   const add = useAppStore((state) => state.addQuestion);
-  const update = useAppStore((state) => state.updateQuestion);
+  const setEnabled = useAppStore((state) => state.setQuestionEnabled);
   const remove = useAppStore((state) => state.deleteQuestion);
   const allDetections = useAppStore((state) => state.detections);
   const detections = useMemo(() => allDetections.filter((item) => item.brandId === brand.id), [allDetections, brand.id]);
+  const searchParams = useSearchParams();
+  const requestedType = searchParams.get("subjectType") === "product" ? "product" as const : "brand" as const;
+  const requestedId = searchParams.get("subjectId") || (requestedType === "brand" ? brand.id : "");
+  const validTarget = requestedType === "brand" ? requestedId === brand.id : brand.products.some((item) => item.id === requestedId);
+  const [targetKey, setTargetKey] = useState(validTarget ? `${requestedType}:${requestedId}` : `brand:${brand.id}`);
+  const [subjectType, subjectId] = targetKey.split(":") as ["brand" | "product", string];
   const [open, setOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [text, setText] = useState("");
+  const [form, setForm] = useState({ text: "", persona: "", decisionScenario: "" });
   const [search, setSearch] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   const list = brand.questions
-    .filter((item) => item.text.includes(search))
+    .filter((item) => item.subjectType === subjectType && item.subjectId === subjectId)
+    .filter((item) => item.text.includes(search) || item.persona.includes(search) || item.decisionScenario.includes(search))
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   const enabled = brand.questions.filter((item) => item.enabled).length;
   const recentlyUsed = usedQuestionIds(detections.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 1));
-  const questionsNeedRefresh = brand.questions.length > 0
-    && (!brand.questionsGeneratedAt || Boolean(brand.questionContextUpdatedAt && brand.questionContextUpdatedAt > brand.questionsGeneratedAt));
-  const openCreate = () => { setEditingId(null); setText(""); setOpen(true); };
-  const openEdit = (id: string, value: string) => { setEditingId(id); setText(value); setOpen(true); };
-  const save = () => {
-    const value = text.trim();
-    if (!value) return;
-    if (editingId) update(brand.id, editingId, { text: value });
-    else add(brand.id, value, "");
-    setOpen(false);
+  const targetName = subjectType === "brand" ? brand.name : brand.products.find((item) => item.id === subjectId)?.name || "产品或服务";
+  const openCreate = () => { setForm({ text: "", persona: "", decisionScenario: "" }); setOpen(true); };
+  const save = async () => {
+    if (!form.text.trim() || !form.persona.trim() || !form.decisionScenario.trim() || saving) return;
+    setSaving(true); setError("");
+    try {
+      await add({ brandId: brand.id, subjectType, subjectId, ...form });
+      setOpen(false);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "检测问题添加失败");
+    } finally { setSaving(false); }
+  };
+  const changeEnabled = async (questionId: string, nextEnabled: boolean) => {
+    setError("");
+    try { await setEnabled(brand.id, questionId, nextEnabled); }
+    catch (updateError) { setError(updateError instanceof Error ? updateError.message : "问题状态更新失败"); }
+  };
+  const deleteOne = async (questionId: string) => {
+    if (!confirm("确认永久删除该问题？删除后不能恢复，历史检测记录仍保留问题文本。")) return;
+    setError("");
+    try { await remove(brand.id, questionId); }
+    catch (deleteError) { setError(deleteError instanceof Error ? deleteError.message : "问题删除失败"); }
   };
 
-  return <GeoFrame title="检测问题库" description="管理实际提交给AI平台的问题，每次检测时重新选择需要使用的问题。" actions={<><Link href="/geo/questions/generate" className="btn"><RefreshCw size={16} />AI生成问题</Link><Button variant="primary" onClick={openCreate}><Plus size={16} />添加问题</Button></>}>
-    {questionsNeedRefresh && <div className="notice notice-warning" style={{ marginBottom: 16 }}><Info size={17} />品牌核心信息已更新，建议重新生成检测问题。<Link className="link" href="/geo/questions/generate">立即重新生成</Link></div>}
-    <div className="grid grid-2" style={{ marginBottom: 16 }}>
-      <div className="card metric-card"><div className="metric-label">全部问题</div><div className="metric-value">{brand.questions.length}</div></div>
-      <div className="card metric-card"><div className="metric-label">已启用</div><div className="metric-value">{enabled}</div></div>
+  return <GeoFrame title="检测问题库" description="正式问题可持续用于监测；入库后只允许启用、停用或永久删除。" actions={<><Link href={`/geo/questions/generate?subjectType=${subjectType}&subjectId=${encodeURIComponent(subjectId)}`} className="btn"><RefreshCw size={16} />模拟新问题</Link><Button variant="primary" disabled={brand.questions.length >= 240} onClick={openCreate}><Plus size={16} />手动添加</Button></>}>
+    {error && <div className="notice notice-danger" role="alert" style={{ marginBottom: 16 }}>{error}</div>}
+    <div className="grid grid-3" style={{ marginBottom: 16 }}>
+      <div className="card metric-card"><div className="metric-label">问题库总量</div><div className="metric-value">{brand.questions.length}<small>/240</small></div></div>
+      <div className="card metric-card"><div className="metric-label">全部已启用</div><div className="metric-value">{enabled}</div></div>
+      <div className="card metric-card"><div className="metric-label">当前对象</div><div className="metric-value">{list.length}</div><div className="metric-meta">{targetName}</div></div>
     </div>
     <Card>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-        <div style={{ maxWidth: 360, position: "relative", flex: 1 }}><Search size={16} style={{ position: "absolute", left: 12, top: 13, color: "#98a2b3" }} /><input className="input" value={search} onChange={(event) => setSearch(event.target.value)} style={{ paddingLeft: 36 }} placeholder="搜索问题" /></div>
+        <select className="select" value={targetKey} onChange={(event) => setTargetKey(event.target.value)} style={{ maxWidth: 300 }}><option value={`brand:${brand.id}`}>品牌 · {brand.name}</option>{brand.products.map((product) => <option value={`product:${product.id}`} key={product.id}>产品 / 服务 · {product.name}</option>)}</select>
+        <div style={{ maxWidth: 360, position: "relative", flex: 1 }}><Search size={16} style={{ position: "absolute", left: 12, top: 13, color: "#98a2b3" }} /><input className="input" value={search} onChange={(event) => setSearch(event.target.value)} style={{ paddingLeft: 36 }} placeholder="搜索问题、角色或场景" /></div>
       </div>
       {list.length ? <div className="table-wrap"><table className="table">
-        <thead><tr><th>检测问题</th><th>最近使用</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+        <thead><tr><th>检测问题</th><th>模拟用户与场景</th><th>最近使用</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>{list.map((item) => <tr key={item.id}>
           <td style={{ maxWidth: 680 }}><strong>{item.text}</strong></td>
+          <td style={{ maxWidth: 300 }}><strong className="small">{item.persona}</strong><div className="muted small" style={{ marginTop: 5 }}>{item.decisionScenario}</div></td>
           <td>{recentlyUsed.has(item.id) ? <Badge tone="primary">上次检测已使用</Badge> : <span className="muted small">未使用</span>}</td>
-          <td><label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><input type="checkbox" checked={item.enabled} onChange={(event) => update(brand.id, item.id, { enabled: event.target.checked })} />{item.enabled ? "启用" : "停用"}</label></td>
-          <td>{new Date(item.updatedAt).toLocaleDateString("zh-CN")}</td>
-          <td><div className="table-row-action"><Button size="icon" variant="ghost" onClick={() => openEdit(item.id, item.text)}><Pencil size={15} /></Button><Button size="icon" variant="ghost" onClick={() => confirm("确认删除该问题？历史检测记录不受影响。") && remove(brand.id, item.id)}><Trash2 size={15} /></Button></div></td>
+          <td><label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><input type="checkbox" checked={item.enabled} onChange={(event) => void changeEnabled(item.id, event.target.checked)} />{item.enabled ? "启用" : "停用"}</label></td>
+          <td><Button size="icon" variant="ghost" aria-label="永久删除问题" onClick={() => void deleteOne(item.id)}><Trash2 size={15} /></Button></td>
         </tr>)}</tbody>
-      </table></div> : <EmptyState title="问题库为空" description="使用AI生成问题，或手动添加一个真实用户问题。" action={<Link className="btn btn-primary" href="/geo/questions/generate">AI生成问题</Link>} />}
+      </table></div> : <EmptyState title="该对象还没有正式问题" description="使用模拟器生成候选问题并确认入库，或手动添加一道问题。" action={<Link className="btn btn-primary" href={`/geo/questions/generate?subjectType=${subjectType}&subjectId=${encodeURIComponent(subjectId)}`}>开始模拟</Link>} />}
     </Card>
-    <Modal open={open} title={editingId ? "编辑检测问题" : "添加检测问题"} onClose={() => setOpen(false)} footer={<><Button onClick={() => setOpen(false)}>取消</Button><Button variant="primary" onClick={save}>保存问题</Button></>}>
-      <Field label="问题内容" required><textarea className="textarea" value={text} onChange={(event) => setText(event.target.value)} placeholder="例如：附近适合健身新手的健身房有哪些？" /></Field>
+    <Modal open={open} title="手动添加正式问题" description="保存后问题文本不能编辑；如需调整，应新增问题并停用或删除旧问题。" onClose={() => setOpen(false)} footer={<><Button onClick={() => setOpen(false)}>取消</Button><Button variant="primary" disabled={saving} onClick={() => void save()}>{saving ? "保存中…" : "保存问题"}</Button></>}>
+      <div className="stack"><Field label="问题内容" required><textarea className="textarea" maxLength={300} value={form.text} onChange={(event) => setForm({ ...form, text: event.target.value })} placeholder="输入用户可能向AI平台提出的问题" /></Field><Field label="对应用户角色" required><input className="input" value={form.persona} onChange={(event) => setForm({ ...form, persona: event.target.value })} placeholder="例如：首次了解者" /></Field><Field label="决策场景" required><input className="input" value={form.decisionScenario} onChange={(event) => setForm({ ...form, decisionScenario: event.target.value })} placeholder="例如：初步寻找适合自己的解决方案" /></Field></div>
     </Modal>
   </GeoFrame>;
 }
 
 export function NewDetectionView() {
-  const router = useRouter(); const search = useSearchParams(); const brand = useAppStore(currentBrand)!; const start = useAppStore((s) => s.startDetection); const [step, setStep] = useState(1); const [providers, setProviders] = useState<ProviderId[]>(["doubao"]); const requestedQuestions = (search.get("questions") || "").split(",").filter(Boolean); const [questions, setQuestions] = useState<string[]>(() => requestedQuestions.filter((id) => brand.questions.some((item) => item.id === id && item.enabled)).slice(0, 10)); const [preflightError, setPreflightError] = useState(""); const [submitting, setSubmitting] = useState(false); const completeness = brandCompleteness(brand); const missing = missingBrandFields(brand);
+  const router = useRouter();
+  const search = useSearchParams();
+  const brand = useAppStore(currentBrand)!;
+  const start = useAppStore((s) => s.startDetection);
+  const requestedType = search.get("subjectType") === "product" ? "product" as const : "brand" as const;
+  const requestedId = search.get("subjectId") || (requestedType === "brand" ? brand.id : "");
+  const validTarget = requestedType === "brand" ? requestedId === brand.id : brand.products.some((item) => item.id === requestedId);
+  const [targetKey, setTargetKey] = useState(validTarget ? `${requestedType}:${requestedId}` : `brand:${brand.id}`);
+  const [subjectType, subjectId] = targetKey.split(":") as ["brand" | "product", string];
+  const subjectName = subjectType === "brand" ? brand.name : brand.products.find((item) => item.id === subjectId)?.name || "产品或服务";
+  const availableQuestions = brand.questions.filter((item) => item.subjectType === subjectType && item.subjectId === subjectId && item.enabled);
+  const [step, setStep] = useState(1);
+  const [providers, setProviders] = useState<ProviderId[]>(["doubao"]);
+  const requestedQuestions = (search.get("questions") || "").split(",").filter(Boolean);
+  const [questions, setQuestions] = useState<string[]>(() => requestedQuestions.filter((id) => brand.questions.some((item) => item.id === id && item.enabled)).slice(0, 10));
+  const [preflightError, setPreflightError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const completeness = brandCompleteness(brand);
+  const missing = missingBrandFields(brand);
   const toggleQuestion = (id: string) => setQuestions((old) => old.includes(id) ? old.filter((x) => x !== id) : old.length < 10 ? [...old, id] : old);
   const toggleProvider = (id: ProviderId) => setProviders((old) => old.includes(id) ? old.filter((item) => item !== id) : [...old, id]);
   const next = () => setStep(2);
@@ -143,7 +183,7 @@ export function NewDetectionView() {
       });
       const payload = await response.json().catch(() => undefined) as { error?: string } | undefined;
       if (!response.ok) throw new Error(payload?.error || "AI平台暂时不可用，请稍后重试");
-      createdId = start(brand.id, providers, questions, search.get("source") || undefined);
+      createdId = start(brand.id, { subjectType, subjectId, subjectName }, providers, questions, search.get("source") || undefined);
       await ensureServerDetectionTask(createdId);
       router.push(`/geo/progress/${createdId}`);
     } catch (error) {
@@ -169,9 +209,9 @@ export function NewDetectionView() {
       setSubmitting(false);
     }
   };
-  return <><PageHeader title="发起检测" description="选择AI平台和真实用户问题，创建本次品牌检测任务。" /><div className="card" style={{ padding: 6, marginBottom: 18 }}><div className="grid grid-2">{["检查品牌档案", "选择平台与问题"].map((label, index) => <div key={label} style={{ display: "flex", alignItems: "center", gap: 9, padding: 12, color: step >= index + 1 ? "var(--primary)" : "var(--text-muted)", background: step === index + 1 ? "var(--primary-soft)" : "transparent", borderRadius: 8 }}><span className="badge" style={{ background: step >= index + 1 ? "var(--primary)" : "#eaecf0", color: step >= index + 1 ? "#fff" : "#667085" }}>{step > index + 1 ? <Check size={13} /> : index + 1}</span><strong>{label}</strong></div>)}</div></div>
-    {step === 1 && <Card title="确认品牌档案" description="仅品牌名称为必填项，资料完整度不会阻止检测。"><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}><strong style={{ fontSize: 26 }}>{brand.name}</strong><Badge tone={completeness >= 67 ? "success" : "warning"}>资料完整度 {completeness}%</Badge></div><Progress value={completeness} /><div style={{ marginTop: 18 }}><span className="secondary">可继续完善：</span>{missing.length ? missing.map((x) => <Badge key={x} tone="warning">{x}</Badge>) : <Badge tone="success">资料完整</Badge>}</div><div style={{ marginTop: 18 }}><Link className="btn" href="/brand/basic">编辑品牌信息</Link></div></Card>}
-    {step === 2 && <div className="stack"><Card title="选择AI平台" description="豆包、DeepSeek和混元（腾讯元宝）均已接入真实模型API，可同时选择。"><div className="grid grid-3">{providerOptions.map((item) => { const selected = providers.includes(item.id); return <button type="button" key={item.id} aria-pressed={selected} onClick={() => toggleProvider(item.id)} style={{ display: "flex", alignItems: "center", gap: 13, minHeight: 76, padding: "14px 16px", borderRadius: 10, border: `1px solid ${selected ? "#6366f1" : "var(--line)"}`, background: selected ? "#fafaff" : "#f8fafc", textAlign: "left", cursor: "pointer" }}><span style={{ display: "grid", placeItems: "center", flex: "0 0 44px", width: 44, height: 44, borderRadius: 12, background: "#fff", border: "1px solid #eaecf0" }}><Image src={providerLogos[item.id]} alt={`${item.name} Logo`} width={34} height={34} style={{ width: 34, height: 34, objectFit: "contain", borderRadius: 8 }} /></span><strong style={{ flex: 1 }}>{item.name}</strong>{selected && <CheckCircle2 size={18} color="#4f46e5" />}</button>; })}</div></Card><Card title="选择检测问题" description={`已选择 ${questions.length}/10 条；每次检测都需要重新选择问题。`} action={<Link href="/geo/questions" className="btn btn-sm">管理问题库</Link>}><div className="stack">{brand.questions.filter((x) => x.enabled).map((item) => <label key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: 13, border: `1px solid ${questions.includes(item.id) ? "#818cf8" : "var(--line)"}`, background: questions.includes(item.id) ? "#fafaff" : "#fff", borderRadius: 9 }}><input type="checkbox" checked={questions.includes(item.id)} disabled={!questions.includes(item.id) && questions.length >= 10} onChange={() => toggleQuestion(item.id)} style={{ marginTop: 3 }} /><strong>{item.text}</strong></label>)}{!brand.questions.some((item) => item.enabled) && <EmptyState title="暂无可用问题" description="请先生成或添加检测问题。" action={<Link className="btn btn-primary" href="/geo/questions/generate">AI生成问题</Link>} />}</div></Card></div>}
+  return <><PageHeader title="发起检测" description={`选择AI平台和1—10道正式问题，检测“${subjectName}”在AI系统中的认知表现。`} /><div className="card" style={{ padding: 6, marginBottom: 18 }}><div className="grid grid-2">{["确认检测对象", "选择平台与问题"].map((label, index) => <div key={label} style={{ display: "flex", alignItems: "center", gap: 9, padding: 12, color: step >= index + 1 ? "var(--primary)" : "var(--text-muted)", background: step === index + 1 ? "var(--primary-soft)" : "transparent", borderRadius: 8 }}><span className="badge" style={{ background: step >= index + 1 ? "var(--primary)" : "#eaecf0", color: step >= index + 1 ? "#fff" : "#667085" }}>{step > index + 1 ? <Check size={13} /> : index + 1}</span><strong>{label}</strong></div>)}</div></div>
+    {step === 1 && <Card title="确认检测对象" description="一次检测只使用同一品牌或产品下的正式问题，避免检测口径混杂。"><Field label="检测对象"><select className="select" value={targetKey} onChange={(event) => { setTargetKey(event.target.value); setQuestions([]); }}><option value={`brand:${brand.id}`}>品牌 · {brand.name}</option>{brand.products.map((product) => <option value={`product:${product.id}`} key={product.id}>产品 / 服务 · {product.name}</option>)}</select></Field><div style={{ display: "flex", justifyContent: "space-between", margin: "18px 0 10px" }}><strong style={{ fontSize: 26 }}>{subjectName}</strong><Badge tone={availableQuestions.length ? "success" : "warning"}>{availableQuestions.length} 道可用问题</Badge></div>{subjectType === "brand" && <><Progress value={completeness} /><div style={{ marginTop: 18 }}><span className="secondary">可继续完善：</span>{missing.length ? missing.map((x) => <Badge key={x} tone="warning">{x}</Badge>) : <Badge tone="success">资料完整</Badge>}</div></>}<div style={{ marginTop: 18, display: "flex", gap: 8 }}><Link className="btn" href={subjectType === "brand" ? "/brand/basic" : "/brand/products"}>查看事实信息</Link>{!availableQuestions.length && <Link className="btn btn-primary" href={`/geo/questions/generate?subjectType=${subjectType}&subjectId=${encodeURIComponent(subjectId)}`}>生成模拟问题</Link>}</div></Card>}
+    {step === 2 && <div className="stack"><Card title="选择AI平台" description="豆包、DeepSeek和混元（腾讯元宝）均已接入真实模型API，可同时选择。"><div className="grid grid-3">{providerOptions.map((item) => { const selected = providers.includes(item.id); return <button type="button" key={item.id} aria-pressed={selected} onClick={() => toggleProvider(item.id)} style={{ display: "flex", alignItems: "center", gap: 13, minHeight: 76, padding: "14px 16px", borderRadius: 10, border: `1px solid ${selected ? "#6366f1" : "var(--line)"}`, background: selected ? "#fafaff" : "#f8fafc", textAlign: "left", cursor: "pointer" }}><span style={{ display: "grid", placeItems: "center", flex: "0 0 44px", width: 44, height: 44, borderRadius: 12, background: "#fff", border: "1px solid #eaecf0" }}><Image src={providerLogos[item.id]} alt={`${item.name} Logo`} width={34} height={34} style={{ width: 34, height: 34, objectFit: "contain", borderRadius: 8 }} /></span><strong style={{ flex: 1 }}>{item.name}</strong>{selected && <CheckCircle2 size={18} color="#4f46e5" />}</button>; })}</div></Card><Card title="选择检测问题" description={`已选择 ${questions.length}/10 条；每次检测都需要重新选择问题。`} action={<Link href={`/geo/questions?subjectType=${subjectType}&subjectId=${encodeURIComponent(subjectId)}`} className="btn btn-sm">管理问题库</Link>}><div className="stack">{availableQuestions.map((item) => <label key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: 13, border: `1px solid ${questions.includes(item.id) ? "#818cf8" : "var(--line)"}`, background: questions.includes(item.id) ? "#fafaff" : "#fff", borderRadius: 9 }}><input type="checkbox" checked={questions.includes(item.id)} disabled={!questions.includes(item.id) && questions.length >= 10} onChange={() => toggleQuestion(item.id)} style={{ marginTop: 3 }} /><div><strong>{item.text}</strong><div className="muted small" style={{ marginTop: 5 }}>{item.persona} · {item.decisionScenario}</div></div></label>)}{!availableQuestions.length && <EmptyState title="暂无可用问题" description="请先生成候选问题并确认入库。" action={<Link className="btn btn-primary" href={`/geo/questions/generate?subjectType=${subjectType}&subjectId=${encodeURIComponent(subjectId)}`}>生成模拟问题</Link>} />}</div></Card></div>}
     {preflightError && <div className="notice notice-warning" style={{ marginTop: 18 }}><Info size={17} />{preflightError}</div>}
     <div className="form-actions" style={{ marginTop: 18 }}>{step > 1 ? <Button disabled={submitting} onClick={() => setStep(step - 1)}><ArrowLeft size={16} />上一步</Button> : <Button onClick={() => router.back()}>取消</Button>}{step === 1 ? <Button variant="primary" onClick={next}>下一步 <ArrowRight size={16} /></Button> : <Button variant="primary" disabled={submitting || !providers.length || !questions.length} onClick={() => void submit()}>{submitting ? "检查中…" : "开始检测"} <ArrowRight size={16} /></Button>}</div>
   </>;

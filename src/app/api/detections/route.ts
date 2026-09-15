@@ -20,6 +20,9 @@ const optionalLegacyText = (maxLength: number) =>
 const requestSchema = z.object({
   id: z.string().trim().min(1).max(120),
   sourceDetectionId: z.string().trim().min(1).max(120).optional(),
+  subjectType: z.enum(["brand", "product"]).default("brand"),
+  subjectId: z.string().trim().min(1).max(120).optional(),
+  subjectName: z.string().trim().min(1).max(100).optional(),
   providers: z.array(z.enum(["doubao", "deepseek", "yuanbao"])).min(1).max(3)
     .refine((items) => new Set(items).size === items.length, "AI平台不能重复"),
   brand: z.object({
@@ -63,7 +66,11 @@ const requestSchema = z.object({
   })).min(1, "请至少选择1个检测问题").max(10, "最多选择10个检测问题")
     .refine((items) => new Set(items.map((item) => item.id)).size === items.length, "检测问题不能重复")
     .refine((items) => new Set(items.map((item) => item.text)).size === items.length, "存在重复的检测问题"),
-});
+}).transform((value) => ({
+  ...value,
+  subjectId: value.subjectId || value.brand.id,
+  subjectName: value.subjectName || value.brand.name,
+}));
 
 export async function GET(request: Request) {
   try {
@@ -120,6 +127,8 @@ export async function POST(request: Request) {
       await validateDetectionOwnership(
         account.organizationId,
         parsed.data.brand.id,
+        parsed.data.subjectType,
+        parsed.data.subjectId,
         parsed.data.questions.map((item) => item.id),
       );
     }
@@ -137,18 +146,35 @@ export async function POST(request: Request) {
   }
 }
 
-async function validateDetectionOwnership(organizationId: string, brandId: string, questionIds: string[]) {
+async function validateDetectionOwnership(
+  organizationId: string,
+  brandId: string,
+  subjectType: "brand" | "product",
+  subjectId: string,
+  questionIds: string[],
+) {
   const supabase = createSupabaseAdminClient();
   const [{ data: brand, error: brandError }, { data: questions, error: questionError }] = await Promise.all([
     supabase.from("brands").select("id").eq("organization_id", organizationId).eq("id", brandId).is("deleted_at", null).maybeSingle(),
-    supabase.from("detection_questions").select("id").eq("organization_id", organizationId).eq("brand_id", brandId).in("id", questionIds),
+    supabase.from("detection_questions").select("id,subject_type,product_id,enabled")
+      .eq("organization_id", organizationId).eq("brand_id", brandId).in("id", questionIds),
   ]);
   if (brandError || questionError) {
     throw new Error(brandError?.message || questionError?.message || "检测数据校验失败");
   }
   if (!brand) throw new WorkspaceAccessError("品牌不属于当前组织", 403);
-  if ((questions || []).length !== questionIds.length) {
-    throw new WorkspaceAccessError("检测问题不属于当前品牌", 403);
+  if (subjectType === "brand" && subjectId !== brandId) throw new WorkspaceAccessError("品牌检测对象不正确", 400);
+  if (subjectType === "product") {
+    const product = await supabase.from("brand_products").select("id")
+      .eq("organization_id", organizationId).eq("brand_id", brandId).eq("id", subjectId).maybeSingle();
+    if (product.error) throw new Error(product.error.message);
+    if (!product.data) throw new WorkspaceAccessError("产品或服务检测对象不存在", 404);
+  }
+  const validQuestions = (questions || []).filter((question) => question.enabled !== false
+    && question.subject_type === subjectType
+    && (subjectType === "brand" ? !question.product_id : question.product_id === subjectId));
+  if (validQuestions.length !== questionIds.length) {
+    throw new WorkspaceAccessError("检测问题已停用、不存在或不属于当前检测对象", 403);
   }
 }
 

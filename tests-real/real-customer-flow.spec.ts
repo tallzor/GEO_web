@@ -132,15 +132,20 @@ test("real customer core flow uses live APIs and persists through relogin", asyn
     await expect(page.getByRole("heading", { name: brandName, exact: true })).toBeVisible();
   });
 
-  await test.step("foundation model generates up to 15 persisted questions", async () => {
-    await page.goto("/geo/questions/generate");
-    const generatedHeading = page.getByText(/\u5df2\u751f\u6210\s*(?:[1-9]|1[0-5])\s*\u6761\u95ee\u9898/);
-    await expect(generatedHeading).toBeVisible({ timeout: 180_000 });
-    // The UI updates before the debounced workspace snapshot reaches Supabase.
-    // Waiting here lets the remainder of the acceptance flow expose later blockers.
+  await test.step("confirmed cognition drives candidate review before questions enter the library", async () => {
+    await page.goto("/brand/cognition");
+    await page.getByRole("button", { name: "开始认知分析" }).click();
+    await expect(page.getByRole("button", { name: "一次确认全部洞察" })).toBeVisible({ timeout: 180_000 });
+    await page.getByRole("button", { name: "一次确认全部洞察" }).click();
+    await expect(page.getByText("已确认", { exact: true }).first()).toBeVisible();
+    await page.getByRole("link", { name: "模拟品牌问题" }).click();
+    await page.getByRole("button", { name: "开始模拟" }).click();
+    await expect(page.getByText(/候选问题审核/)).toBeVisible({ timeout: 180_000 });
+    await page.getByRole("button", { name: /确认 \d+ 道并加入问题库/ }).click();
+    await expect(page).toHaveURL(/geo\/questions/);
     await expect.poll(async () => {
       const questionCount = await count("detection_questions");
-      return questionCount >= 1 && questionCount <= 15;
+      return questionCount >= 1 && questionCount <= 24;
     }, { timeout: 30_000 }).toBe(true);
     await page.goto("/geo/new");
   });
