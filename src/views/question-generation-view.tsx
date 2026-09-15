@@ -100,8 +100,8 @@ export function QuestionGenerationView() {
   };
 
   return <>
-    <PageHeader title="用户问题模拟器" description="让合成用户角色从真实决策场景出发，提出用于GEO检测的模拟问题。" actions={<Link href="/geo/questions" className="btn">返回问题库</Link>} />
-    <Card title="选择检测对象" description="品牌与每个产品使用各自已确认的认知基准，信息不会跨对象混用。">
+    <PageHeader title="用户问题模拟器" description="模拟真实用户在不同决策场景中可能向AI平台提出的问题。" actions={<Link href="/geo/questions" className="btn">返回问题库</Link>} />
+    <Card title="选择模拟对象" description="选择品牌或一个产品 / 服务，系统只使用该对象已经确认的认知信息。">
       <Field label="本次模拟对象"><select className="select" value={target ? `${target.subjectType}:${target.subjectId}` : ""} onChange={(event) => switchTarget(event.target.value)}>
         <option value={`brand:${brand.id}`}>品牌 · {brand.name}</option>
         {brand.products.map((product) => <option value={`product:${product.id}`} key={product.id}>产品 / 服务 · {product.name}</option>)}
@@ -116,7 +116,7 @@ export function QuestionGenerationView() {
         : !run || run.status === "confirmed" || run.status === "cancelled" ? <Card><EmptyState
           icon={<Users size={26} />}
           title={run?.status === "confirmed" ? "上一批问题已进入问题库" : run?.status === "cancelled" ? "上一批模拟已放弃" : "可以开始模拟用户问题"}
-          description={checked.ready ? `系统将围绕“${targetName}”生成默认12道候选问题，生成后由你审核确认。` : "当前信息还不足以可靠扮演用户。"}
+          description={checked.ready ? `系统将围绕“${targetName}”生成12道候选问题，生成后由你审核确认。` : "当前认知信息还不足以模拟真实用户问题。"}
           action={<Button variant="primary" disabled={!checked.ready || submitting} onClick={() => void begin()}>{submitting ? "提交中…" : run ? "再生成一批" : "开始模拟"}</Button>}
         />{!checked.ready && <div className="cognition-issues">{checked.issues.map((issue) => <span key={`${issue.path}-${issue.message}`}>{issue.message}</span>)}</div>}</Card>
         : run.status === "queued" || run.status === "generating" ? <Card title={<span className="cognition-status-title">模拟生成批次 <Badge tone={statusMeta[run.status].tone}>{statusMeta[run.status].label}</Badge></span>} description={`检测对象：${run.subjectName} · 第 ${run.attempt || 1} 次尝试`}>
@@ -151,7 +151,7 @@ function QuestionReviewPanel({ run, currentCount, existingQuestions, onError }: 
     setSubmitting(true); onError("");
     try {
       await confirmSimulation(run.id, selectedDrafts);
-      router.push(`/geo/questions?subjectType=${run.subjectType}&subjectId=${encodeURIComponent(run.subjectId)}`);
+      router.push(`/geo/questions?subjectType=${run.subjectType}&subjectId=${encodeURIComponent(run.subjectId)}&added=${selectedDrafts.length}`);
     } catch (error) {
       onError(error instanceof Error ? error.message : "候选问题确认失败");
     } finally { setSubmitting(false); }
@@ -170,20 +170,22 @@ function QuestionReviewPanel({ run, currentCount, existingQuestions, onError }: 
     setManual({ text: "", persona: "", decisionScenario: "" });
     setManualOpen(false);
   };
+  const allSelected = drafts.length > 0 && selected.size === drafts.length;
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(drafts.map((item) => item.id)));
   return <>
-    <Card title={`候选问题审核 · ${drafts.length} 道`} description="候选问题可以修改、删除或取消选择；确认后成为正式问题，不再允许编辑。" action={<Button onClick={() => setManualOpen(true)} disabled={drafts.length >= 24}><Plus size={16} />手动添加</Button>}>
+    <Card title={`候选问题审核 · ${drafts.length} 道`} description="逐条检查问题、用户角色和决策场景；确认入库后，问题文本不再允许修改。" action={<div className="question-review-tools"><span className="secondary small">已选 {selectedDrafts.length} 道</span><Button size="sm" onClick={toggleAll} disabled={!drafts.length}>{allSelected ? "取消全选" : "全选"}</Button><Button size="sm" onClick={() => setManualOpen(true)} disabled={drafts.length >= 24}><Plus size={16} />手动添加</Button></div>}>
       {run.coverageGaps.length > 0 && <div className="notice notice-warning" style={{ marginBottom: 14 }}>{run.coverageGaps.join("；")}</div>}
       {duplicateCount > 0 && <div className="notice" style={{ marginBottom: 14 }}>发现 {duplicateCount} 处疑似重复。你仍可确认入库，系统不会硬性阻止审核后的问题。</div>}
       <div className="stack">{drafts.map((item, index) => <article className="question-candidate" key={item.id}>
-        <label className="question-candidate-select"><input type="checkbox" checked={selected.has(item.id)} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; })} /><span>{index + 1}</span></label>
+        <label className="question-candidate-select"><input type="checkbox" aria-label={`选择候选问题 ${index + 1}`} checked={selected.has(item.id)} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; })} /><span>{index + 1}</span></label>
         <div className="question-candidate-fields"><textarea className="textarea" maxLength={300} value={item.text} onChange={(event) => setDrafts((current) => current.map((draft) => draft.id === item.id ? { ...draft, text: event.target.value } : draft))} /><div className="grid grid-2"><Field label="模拟用户角色"><input className="input" value={item.persona} onChange={(event) => setDrafts((current) => current.map((draft) => draft.id === item.id ? { ...draft, persona: event.target.value } : draft))} /></Field><Field label="决策场景"><input className="input" value={item.decisionScenario} onChange={(event) => setDrafts((current) => current.map((draft) => draft.id === item.id ? { ...draft, decisionScenario: event.target.value } : draft))} /></Field></div></div>
         <Button size="icon" variant="ghost" aria-label="删除候选问题" onClick={() => { setDrafts((current) => current.filter((draft) => draft.id !== item.id)); setSelected((current) => { const next = new Set(current); next.delete(item.id); return next; }); }}><Trash2 size={16} /></Button>
       </article>)}</div>
       {!drafts.length && <EmptyState title="候选问题已清空" description="你可以手动添加问题，或放弃本批次后重新生成。" />}
-      <div className="form-actions" style={{ marginTop: 18 }}><Button disabled={submitting} onClick={() => void abandon()}>放弃本批次</Button><Button variant="primary" disabled={submitting || !selectedDrafts.length || Boolean(capacityShortfall)} onClick={() => void confirmAll()}><CheckCircle2 size={16} />确认 {selectedDrafts.length} 道并加入问题库</Button></div>
+      <div className="form-actions question-review-actions" style={{ marginTop: 18 }}><Button disabled={submitting} onClick={() => void abandon()}>放弃本批次</Button><Button variant="primary" disabled={submitting || !selectedDrafts.length || Boolean(capacityShortfall)} onClick={() => void confirmAll()}><CheckCircle2 size={16} />确认 {selectedDrafts.length} 道并加入问题库</Button></div>
       {capacityShortfall > 0 && <div className="notice notice-warning" style={{ marginTop: 14 }}>问题库容量不足，请先删除 {capacityShortfall} 道旧问题。候选问题会保留在本批次中。</div>}
     </Card>
-    {run.personas.length > 0 && <Card title="本批次模拟用户角色" description="角色只是生成问题时采用的合成视角，不代表真实自然人。"><div className="grid grid-2">{run.personas.map((persona) => <div className="persona-card" key={persona.id}><strong>{persona.name}</strong><p>{persona.task}</p><span>{persona.knowledgeLevel} · {persona.concern}</span></div>)}</div></Card>}
+    {run.personas.length > 0 && <Card title="本批次模拟用户角色" description="这些角色用于覆盖不同用户需求，不代表具体的真实个人。"><div className="grid grid-2">{run.personas.map((persona) => <div className="persona-card" key={persona.id}><strong>{persona.name}</strong><p>{persona.task}</p><span>{persona.knowledgeLevel} · {persona.concern}</span></div>)}</div></Card>}
     {run.externalReferences.length > 0 && <Card title="公开参考资料" description="这些资料只用于理解行业语言与常见顾虑，不会自动成为品牌事实。"><div className="stack">{run.externalReferences.map((reference) => <a className="link" href={reference.url} target="_blank" rel="noreferrer" key={reference.url}>{reference.title}</a>)}</div></Card>}
     <Modal open={manualOpen} title="手动添加候选问题" description="手动问题同样先留在本批次，确认后才进入问题库。" onClose={() => setManualOpen(false)} footer={<><Button onClick={() => setManualOpen(false)}>取消</Button><Button variant="primary" onClick={addManual}>加入候选列表</Button></>}><div className="stack"><Field label="问题文本" required><textarea className="textarea" maxLength={300} value={manual.text} onChange={(event) => setManual({ ...manual, text: event.target.value })} /></Field><Field label="模拟用户角色" required><input className="input" value={manual.persona} onChange={(event) => setManual({ ...manual, persona: event.target.value })} /></Field><Field label="决策场景" required><input className="input" value={manual.decisionScenario} onChange={(event) => setManual({ ...manual, decisionScenario: event.target.value })} /></Field></div></Modal>
   </>;

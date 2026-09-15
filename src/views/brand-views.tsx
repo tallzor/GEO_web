@@ -99,7 +99,7 @@ export function NewBrandView() {
   const startCognition = useAppStore((state) => state.startCognition);
   const [step, setStep] = useState<NewBrandStep>(1);
   const [basic, setBasic] = useState(newBrandDraft);
-  const [products, setProducts] = useState<ProductDraft[]>([]);
+  const [products, setProducts] = useState<ProductDraft[]>(() => [newProductDraft()]);
   const [competitors, setCompetitors] = useState<Omit<Competitor, "id">[]>([]);
   const [issues, setIssues] = useState<CognitionPreflightIssue[]>([]);
   const [error, setError] = useState("");
@@ -297,7 +297,7 @@ export function NewBrandView() {
           </div>
           <Field label="其他信息" hint="选填"><textarea className="textarea" value={item.otherInfo} onChange={(event) => updateProduct(index, { otherInfo: event.target.value })} /></Field>
         </section>)}
-        <Button type="button" variant="soft" onClick={() => { setProducts([...products, newProductDraft()]); setError(""); }}><Plus size={16} />新增产品</Button>
+        <Button type="button" variant="soft" onClick={() => { setProducts([...products, newProductDraft()]); setError(""); }}><Plus size={16} />再添加一个产品或服务</Button>
         <PreflightNotice message={error} issues={issues} step={step} />
         <div className="form-actions"><Button type="button" disabled={saving} onClick={() => { clearValidation(); setStep(1); }}>上一步</Button><Button type="button" disabled={saving} onClick={() => void saveBrand(false)}>{saving ? "保存中…" : "保存草稿"}</Button><Button variant="primary" disabled={saving}>下一步</Button></div>
       </form>}

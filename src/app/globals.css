@@ -35,6 +35,12 @@
 .cognition-conclusion { margin: 0; white-space: pre-wrap; line-height: 1.7; }
 .cognition-evidence { display: flex; flex-wrap: wrap; gap: 7px 14px; color: var(--text-muted); font-size: 12px; }
 .cognition-evidence a { display: inline-flex; align-items: center; gap: 4px; color: var(--primary); }
+.cognition-review-submit { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 16px; padding: 16px 18px; border: 1px solid #c7d7fe; border-radius: 12px; background: #f7f8ff; box-shadow: var(--shadow); }
+.cognition-review-submit > div { display: grid; gap: 4px; }
+.cognition-review-submit span { color: var(--text-secondary); font-size: 12px; }
+.question-review-tools { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.question-library-toolbar { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.question-library-success > div { display: grid; gap: 2px; }
 
 * { box-sizing: border-box; }
 html { min-width: 320px; background: var(--bg); }
@@ -617,4 +623,26 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .brand-wizard-step > span { width: 21px; height: 21px; }
   .brand-wizard-step strong { font-size: 11px; }
   .brand-wizard-entry { padding: 14px; }
+  .cognition-review-submit { position: sticky; z-index: 30; bottom: 76px; align-items: stretch; flex-direction: column; padding: 13px; box-shadow: 0 10px 28px rgb(16 24 40 / 18%); }
+  .cognition-review-submit .btn { width: 100%; }
+  .question-review-tools { justify-content: flex-start; margin-top: 10px; }
+  .question-review-actions { position: sticky; z-index: 30; bottom: 76px; padding: 11px; border: 1px solid var(--line); border-radius: 10px; background: rgb(255 255 255 / 96%); box-shadow: 0 10px 28px rgb(16 24 40 / 18%); backdrop-filter: blur(10px); }
+  .question-review-actions .btn:last-child { flex: 1; }
+  .question-library-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .question-library-metrics .metric-card { min-height: 94px; padding: 13px 10px; }
+  .question-library-metrics .metric-label { font-size: 11px; }
+  .question-library-metrics .metric-value { margin-top: 11px; font-size: 22px; }
+  .question-library-metrics .metric-meta { margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .question-library-toolbar { align-items: stretch; flex-direction: column; }
+  .question-library-toolbar > *, .question-library-toolbar .select { width: 100%; max-width: none !important; }
+  .question-library-table-wrap { overflow: visible; }
+  .question-library-table { min-width: 0; }
+  .question-library-table thead { display: none; }
+  .question-library-table tbody { display: grid; gap: 10px; }
+  .question-library-table tr { display: grid; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  .question-library-table td { display: grid; grid-template-columns: 84px minmax(0, 1fr); align-items: start; gap: 10px; max-width: none !important; padding: 9px 0; border: 0; }
+  .question-library-table td::before { content: attr(data-label); color: var(--text-muted); font-size: 11px; font-weight: 600; }
+  .question-library-table td:first-child { grid-template-columns: minmax(0, 1fr); padding-top: 0; }
+  .question-library-table td:first-child::before { display: none; }
+  .question-library-table td:last-child { padding-bottom: 0; }
 }

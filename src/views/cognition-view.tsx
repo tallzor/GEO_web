@@ -207,6 +207,10 @@ export function CognitionView({ runId }: { runId?: string }) {
           </div>
         </Card>)}
       </div>}
+      {run.status === "review_required" && owner && <div className="cognition-review-submit">
+        <div><strong>已到达审核末尾</strong><span>确认后形成品牌与产品认知基准，不会修改事实档案。</span></div>
+        <Button variant="primary" disabled={submitting} onClick={() => void confirmAll()}><CheckCircle2 size={16} />{submitting ? "确认中…" : "确认并建立认知基准"}</Button>
+      </div>}
     </>}
     {toast && <Toast message={toast} onClose={() => setToast("")} />}
   </>;

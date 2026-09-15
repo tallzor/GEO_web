@@ -89,11 +89,14 @@ export function QuestionsView() {
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const list = brand.questions
-    .filter((item) => item.subjectType === subjectType && item.subjectId === subjectId)
+  const targetQuestions = brand.questions.filter((item) => item.subjectType === subjectType && item.subjectId === subjectId);
+  const list = targetQuestions
     .filter((item) => item.text.includes(search) || item.persona.includes(search) || item.decisionScenario.includes(search))
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   const enabled = brand.questions.filter((item) => item.enabled).length;
+  const targetEnabled = targetQuestions.filter((item) => item.enabled).length;
+  const showingConfirmedTarget = subjectType === requestedType && subjectId === requestedId;
+  const addedCount = showingConfirmedTarget ? Math.min(24, Math.max(0, Number.parseInt(searchParams.get("added") || "0", 10) || 0)) : 0;
   const recentlyUsed = usedQuestionIds(detections.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 1));
   const targetName = subjectType === "brand" ? brand.name : brand.products.find((item) => item.id === subjectId)?.name || "产品或服务";
   const openCreate = () => { setForm({ text: "", persona: "", decisionScenario: "" }); setOpen(true); };
@@ -119,26 +122,28 @@ export function QuestionsView() {
     catch (deleteError) { setError(deleteError instanceof Error ? deleteError.message : "问题删除失败"); }
   };
 
-  return <GeoFrame title="检测问题库" description="正式问题可持续用于监测；入库后只允许启用、停用或永久删除。" actions={<><Link href={`/geo/questions/generate?subjectType=${subjectType}&subjectId=${encodeURIComponent(subjectId)}`} className="btn"><RefreshCw size={16} />模拟新问题</Link><Button variant="primary" disabled={brand.questions.length >= 240} onClick={openCreate}><Plus size={16} />手动添加</Button></>}>
+  return <GeoFrame title="检测问题库" description="管理已经确认的正式问题，并选择启用问题用于后续GEO检测。" actions={<><Link href={`/geo/questions/generate?subjectType=${subjectType}&subjectId=${encodeURIComponent(subjectId)}`} className="btn"><RefreshCw size={16} />模拟新问题</Link>{targetEnabled > 0 && <Link href={`/geo/new?subjectType=${subjectType}&subjectId=${encodeURIComponent(subjectId)}`} className="btn btn-primary">发起检测<ArrowRight size={16} /></Link>}</>}>
     {error && <div className="notice notice-danger" role="alert" style={{ marginBottom: 16 }}>{error}</div>}
-    <div className="grid grid-3" style={{ marginBottom: 16 }}>
+    {addedCount > 0 && <div className="notice notice-success question-library-success" style={{ marginBottom: 16 }}><CheckCircle2 size={17} /><div><strong>已将 {addedCount} 道问题加入“{targetName}”问题库</strong><div className="small">问题默认启用，现在可以直接选择问题发起GEO检测。</div></div></div>}
+    <div className="grid grid-3 question-library-metrics" style={{ marginBottom: 16 }}>
       <div className="card metric-card"><div className="metric-label">问题库总量</div><div className="metric-value">{brand.questions.length}<small>/240</small></div></div>
       <div className="card metric-card"><div className="metric-label">全部已启用</div><div className="metric-value">{enabled}</div></div>
-      <div className="card metric-card"><div className="metric-label">当前对象</div><div className="metric-value">{list.length}</div><div className="metric-meta">{targetName}</div></div>
+      <div className="card metric-card"><div className="metric-label">当前对象</div><div className="metric-value">{targetQuestions.length}</div><div className="metric-meta">{targetName}</div></div>
     </div>
     <Card>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+      <div className="question-library-toolbar">
         <select className="select" value={targetKey} onChange={(event) => setTargetKey(event.target.value)} style={{ maxWidth: 300 }}><option value={`brand:${brand.id}`}>品牌 · {brand.name}</option>{brand.products.map((product) => <option value={`product:${product.id}`} key={product.id}>产品 / 服务 · {product.name}</option>)}</select>
         <div style={{ maxWidth: 360, position: "relative", flex: 1 }}><Search size={16} style={{ position: "absolute", left: 12, top: 13, color: "#98a2b3" }} /><input className="input" value={search} onChange={(event) => setSearch(event.target.value)} style={{ paddingLeft: 36 }} placeholder="搜索问题、角色或场景" /></div>
+        <Button disabled={brand.questions.length >= 240} onClick={openCreate}><Plus size={16} />手动添加</Button>
       </div>
-      {list.length ? <div className="table-wrap"><table className="table">
+      {list.length ? <div className="table-wrap question-library-table-wrap"><table className="table question-library-table">
         <thead><tr><th>检测问题</th><th>模拟用户与场景</th><th>最近使用</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>{list.map((item) => <tr key={item.id}>
-          <td style={{ maxWidth: 680 }}><strong>{item.text}</strong></td>
-          <td style={{ maxWidth: 300 }}><strong className="small">{item.persona}</strong><div className="muted small" style={{ marginTop: 5 }}>{item.decisionScenario}</div></td>
-          <td>{recentlyUsed.has(item.id) ? <Badge tone="primary">上次检测已使用</Badge> : <span className="muted small">未使用</span>}</td>
-          <td><label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><input type="checkbox" checked={item.enabled} onChange={(event) => void changeEnabled(item.id, event.target.checked)} />{item.enabled ? "启用" : "停用"}</label></td>
-          <td><Button size="icon" variant="ghost" aria-label="永久删除问题" onClick={() => void deleteOne(item.id)}><Trash2 size={15} /></Button></td>
+          <td data-label="检测问题" style={{ maxWidth: 680 }}><strong>{item.text}</strong></td>
+          <td data-label="用户与场景" style={{ maxWidth: 300 }}><strong className="small">{item.persona}</strong><div className="muted small" style={{ marginTop: 5 }}>{item.decisionScenario}</div></td>
+          <td data-label="最近使用">{recentlyUsed.has(item.id) ? <Badge tone="primary">上次检测已使用</Badge> : <span className="muted small">未使用</span>}</td>
+          <td data-label="状态"><label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><input type="checkbox" checked={item.enabled} onChange={(event) => void changeEnabled(item.id, event.target.checked)} />{item.enabled ? "启用" : "停用"}</label></td>
+          <td data-label="操作"><Button size="icon" variant="ghost" aria-label="永久删除问题" onClick={() => void deleteOne(item.id)}><Trash2 size={15} /></Button></td>
         </tr>)}</tbody>
       </table></div> : <EmptyState title="该对象还没有正式问题" description="使用模拟器生成候选问题并确认入库，或手动添加一道问题。" action={<Link className="btn btn-primary" href={`/geo/questions/generate?subjectType=${subjectType}&subjectId=${encodeURIComponent(subjectId)}`}>开始模拟</Link>} />}
     </Card>

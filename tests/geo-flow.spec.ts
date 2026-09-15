@@ -173,7 +173,8 @@ test("v0.3.0：从品牌事实输入到一次确认认知洞察", async ({ page 
   await page.getByLabel("核心受众").fill("关注配料和糖分的城市消费者");
   await page.getByRole("button", { name: "下一步" }).click();
 
-  await page.getByRole("button", { name: "新增产品" }).click();
+  await expect(page.getByLabel("产品或服务名称")).toBeVisible();
+  await expect(page.getByRole("button", { name: "再添加一个产品或服务" })).toBeVisible();
   await page.getByLabel("产品或服务名称").fill("清衡低糖茶");
   await page.getByLabel(/简介/).fill("一款低糖即饮茶饮料。");
   await page.getByLabel("应用场景").fill("工作和用餐时即饮");
@@ -185,6 +186,7 @@ test("v0.3.0：从品牌事实输入到一次确认认知洞察", async ({ page 
   await expect(page.getByRole("heading", { name: "认知洞察" })).toBeVisible();
   await expect(page.getByText("品牌认知六要素")).toBeVisible();
   await expect(page.getByText(/BFABEWW/).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "确认并建立认知基准" })).toBeVisible();
   const advantageEditor = page.locator(".cognition-item").filter({ hasText: "Advantage｜优势" }).locator("textarea");
   await expect(advantageEditor).toHaveValue(/待验证主张：比常规含糖茶饮糖分更低/);
   await advantageEditor.fill("客户审核结论：当前优势证据不足");
@@ -205,11 +207,16 @@ test("v0.3.0：从品牌事实输入到一次确认认知洞察", async ({ page 
   await expect(page.getByRole("heading", { name: "用户问题模拟器" })).toBeVisible();
   await page.getByRole("button", { name: "开始模拟" }).click();
   await expect(page.getByText(/候选问题审核 · 12 道/)).toBeVisible();
+  await page.getByRole("button", { name: "取消全选" }).click();
+  await expect(page.getByRole("button", { name: /确认 0 道并加入问题库/ })).toBeDisabled();
+  await page.getByRole("button", { name: "全选", exact: true }).click();
   const candidateEditors = page.locator(".question-candidate textarea");
   await candidateEditors.first().fill(await candidateEditors.nth(1).inputValue());
   await expect(page.getByText(/疑似重复/)).toBeVisible();
   await page.getByRole("button", { name: /确认 12 道并加入问题库/ }).click();
   await expect(page).toHaveURL(/geo\/questions/);
+  await expect(page.getByText(/已将 12 道问题加入/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "发起检测" })).toBeVisible();
   await expect(page.getByRole("button", { name: "永久删除问题" }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: /编辑/ })).toHaveCount(0);
 
@@ -374,7 +381,6 @@ test("新建品牌：三步向导保存产品与选填竞品", async ({ page }) 
   await expect(page.getByRole("heading", { name: "竞品信息" })).toBeVisible();
   await page.getByRole("button", { name: "上一步", exact: true }).click();
 
-  await page.getByRole("button", { name: "新增产品", exact: true }).click();
   await page.getByLabel("产品或服务名称").fill("轻盈饮品");
   await page.getByLabel(/简介/).fill("面向日常饮用场景的消费产品。");
   await page.getByLabel("应用场景").fill("工作与用餐");
