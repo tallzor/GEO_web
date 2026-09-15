@@ -74,7 +74,7 @@ export function brandCompleteness(brand: Brand) {
     Boolean(brand.website),
     brand.products.length > 0,
     brand.competitors.length > 0,
-    brand.knowledge.some((item) => item.status === "active"),
+    brand.knowledge.some((item) => item.status === "uploaded"),
   ];
   return Math.round((checks.filter(Boolean).length / checks.length) * 100);
 }
@@ -90,7 +90,7 @@ export function missingBrandFields(brand: Brand) {
   if (!brand.website) fields.push("官方网站");
   if (!brand.products.length) fields.push("产品与服务");
   if (!brand.competitors.length) fields.push("竞品信息");
-  if (!brand.knowledge.some((item) => item.status === "active")) fields.push("知识附件");
+  if (!brand.knowledge.some((item) => item.status === "uploaded")) fields.push("知识附件");
   return fields;
 }
 

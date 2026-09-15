@@ -1,4 +1,10 @@
-import type { ContentItem, Detection, OptimizationCycle } from "@/lib/types";
+import type {
+  CognitionInsightRevision,
+  CognitionRun,
+  ContentItem,
+  Detection,
+  OptimizationCycle,
+} from "@/lib/types";
 import type { WorkspaceSaveResult } from "@/lib/workspace";
 import type { StoreRemotePort } from "@/lib/store/contracts";
 
@@ -40,6 +46,38 @@ export const httpStoreAdapter: StoreRemotePort = {
       body: JSON.stringify(input),
     });
     return readEntity<ContentItem>(response, "content", "优化内容生成失败，请稍后重试");
+  },
+
+  async startCognition(brandId) {
+    const response = await fetch("/api/cognition-runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ brandId }),
+    });
+    return readEntity<CognitionRun>(response, "run", "认知分析启动失败");
+  },
+
+  async getCognition(input) {
+    const params = new URLSearchParams();
+    if (input.runId) params.set("runId", input.runId);
+    if (input.brandId) params.set("brandId", input.brandId);
+    const response = await fetch(`/api/cognition-runs?${params.toString()}`, { cache: "no-store" });
+    if (response.status === 404) return undefined;
+    return readEntity<CognitionRun>(response, "run", "认知分析读取失败");
+  },
+
+  async retryCognition(runId) {
+    const response = await fetch(`/api/cognition-runs/${encodeURIComponent(runId)}/retry`, { method: "POST" });
+    return readEntity<CognitionRun>(response, "run", "认知分析重试失败");
+  },
+
+  async confirmCognition(runId, revisions: CognitionInsightRevision[]) {
+    const response = await fetch(`/api/cognition-runs/${encodeURIComponent(runId)}/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ revisions }),
+    });
+    return readEntity<CognitionRun>(response, "run", "认知洞察确认失败");
   },
 };
 

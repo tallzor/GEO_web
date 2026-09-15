@@ -2,6 +2,8 @@ import type { StateCreator } from "zustand";
 import type {
   Brand,
   ChannelId,
+  CognitionInsightRevision,
+  CognitionRun,
   Competitor,
   ContentItem,
   Detection,
@@ -30,7 +32,23 @@ type BrandPatch = Partial<Omit<Brand, "id" | "products" | "competitors" | "knowl
 
 export type CreateBrandInput = Pick<Brand, "name"> & Partial<Pick<
   Brand,
-  "shortName" | "characteristics" | "categoryName" | "trustProof" | "positioningStatement" | "industry" | "intro" | "serviceArea" | "targetAudience"
+  | "shortName"
+  | "characteristics"
+  | "categoryName"
+  | "trustProof"
+  | "positioningStatement"
+  | "industry"
+  | "industryCode"
+  | "industryPath"
+  | "industryStandard"
+  | "website"
+  | "intro"
+  | "serviceArea"
+  | "targetAudience"
+  | "coreScenarios"
+  | "valuePromise"
+  | "cognitionBoundary"
+  | "otherInfo"
 >> & {
   products?: Omit<ProductService, "id" | "updatedAt">[];
   competitors?: Omit<Competitor, "id">[];
@@ -119,7 +137,15 @@ export type OptimizationSlice = {
   runRiskCheck: (contentId: string) => void;
 };
 
-export type AppStore = WorkspaceSlice & BrandSlice & DetectionSlice & OptimizationSlice;
+export type CognitionSlice = {
+  cognitionRuns: CognitionRun[];
+  startCognition: (brandId: string) => Promise<string>;
+  loadCognition: (input: { runId?: string; brandId?: string }) => Promise<CognitionRun | undefined>;
+  retryCognition: (runId: string) => Promise<void>;
+  confirmCognition: (runId: string, revisions: CognitionInsightRevision[]) => Promise<void>;
+};
+
+export type AppStore = WorkspaceSlice & BrandSlice & DetectionSlice & OptimizationSlice & CognitionSlice;
 
 export type ContentGenerationInput = {
   cycleId: string;
@@ -132,6 +158,10 @@ export type StoreRemotePort = {
   retryDetection: (detectionId: string) => Promise<Detection>;
   createOptimizationCycle: (detectionId: string, suggestionId: string) => Promise<OptimizationCycle>;
   generateOptimizationContent: (input: ContentGenerationInput) => Promise<ContentItem>;
+  startCognition: (brandId: string) => Promise<CognitionRun>;
+  getCognition: (input: { runId?: string; brandId?: string }) => Promise<CognitionRun | undefined>;
+  retryCognition: (runId: string) => Promise<CognitionRun>;
+  confirmCognition: (runId: string, revisions: CognitionInsightRevision[]) => Promise<CognitionRun>;
 };
 
 export type StoreDependencies = {

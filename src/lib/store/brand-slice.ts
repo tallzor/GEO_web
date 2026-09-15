@@ -11,9 +11,16 @@ const questionContextFields: ReadonlyArray<keyof Brand> = [
   "trustProof",
   "positioningStatement",
   "industry",
+  "industryCode",
+  "industryPath",
+  "industryStandard",
   "intro",
   "serviceArea",
   "targetAudience",
+  "coreScenarios",
+  "valuePromise",
+  "cognitionBoundary",
+  "otherInfo",
 ];
 
 export function createBrandSlice(
@@ -36,12 +43,19 @@ export function createBrandSlice(
         trustProof: input.trustProof || "",
         positioningStatement: input.positioningStatement || "",
         industry: input.industry || "",
-        website: "",
+        industryCode: input.industryCode || "",
+        industryPath: input.industryPath || "",
+        industryStandard: input.industryStandard || "",
+        website: input.website || "",
         intro: input.intro || "",
         city: "",
         stores: [],
         serviceArea: input.serviceArea || "",
         targetAudience: input.targetAudience || "",
+        coreScenarios: input.coreScenarios || "",
+        valuePromise: input.valuePromise || "",
+        cognitionBoundary: input.cognitionBoundary || "",
+        otherInfo: input.otherInfo || "",
         products: (input.products || []).map((item) => ({ ...item, id: createId("product"), updatedAt: now })),
         competitors: (input.competitors || []).map((item) => ({ ...item, id: createId("competitor") })),
         knowledge: [],
@@ -67,6 +81,7 @@ export function createBrandSlice(
         publishBatches: state.publishBatches.filter((batch) => batch.brandId !== brandId),
         publishRecords: state.publishRecords.filter((record) => record.brandId !== brandId),
         platforms: state.platforms.filter((platform) => platform.brandId !== brandId),
+        cognitionRuns: state.cognitionRuns.filter((run) => run.brandId !== brandId),
       };
     }),
     updateBrand: (brandId, patch) => set((state) => {
@@ -101,6 +116,7 @@ export function createBrandSlice(
       brands: state.brands.map((brand) => brand.id === brandId ? {
         ...brand,
         products: brand.products.filter((item) => item.id !== productId),
+        knowledge: brand.knowledge.map((item) => item.productId === productId ? { ...item, productId: undefined } : item),
         updatedAt: isoNow(),
       } : brand),
     })),

@@ -28,22 +28,47 @@ export const useAppStore = create<AppStore>()(
     createAppStoreState(initial, dependencies),
     {
       name: "geo-web-demo-v3",
-      version: 4,
+      version: 5,
       migrate: (persistedState, version) => {
         const state = persistedState as Partial<AppStore>;
-        if (version >= 4) return state as AppStore;
+        if (version >= 5) return state as AppStore;
         const cycleIds = new Set((state.cycles || []).map((cycle) => cycle.id));
         const taskIds = new Set((state.cycles || []).flatMap((cycle) => cycle.tasks.map((task) => task.id)));
         const contentIds = new Set((state.contents || []).map((content) => content.id));
         return {
           ...state,
-          publishBatches: [],
+          brands: (state.brands || []).map((brand) => ({
+            ...brand,
+            industryCode: brand.industryCode || "",
+            industryPath: brand.industryPath || "",
+            industryStandard: brand.industryStandard || "",
+            coreScenarios: brand.coreScenarios || "",
+            valuePromise: brand.valuePromise || "",
+            cognitionBoundary: brand.cognitionBoundary || "",
+            otherInfo: brand.otherInfo || "",
+            products: brand.products.map((product) => ({
+              ...product,
+              scenarios: product.scenarios || "",
+              advantages: product.advantages || "",
+              problemsSolved: product.problemsSolved || "",
+              quantitativeFacts: product.quantitativeFacts || "",
+              evidence: product.evidence || "",
+              limitations: product.limitations || "",
+              otherInfo: product.otherInfo || "",
+            })),
+            knowledge: brand.knowledge.map((attachment) => ({
+              ...attachment,
+              status: attachment.status === "failed" ? "failed" as const : "uploaded" as const,
+            })),
+          })),
+          publishBatches: version >= 4 ? state.publishBatches || [] : [],
           publishRecords: (state.publishRecords || []).filter((record) => (
             cycleIds.has(record.cycleId)
             && taskIds.has(record.taskId)
             && contentIds.has(record.contentId)
           )),
-          platforms: [],
+          platforms: version >= 4 ? state.platforms || [] : [],
+          cognitionRuns: [],
         } as AppStore;
       },
       partialize: (state) => ({
@@ -58,6 +83,7 @@ export const useAppStore = create<AppStore>()(
           publishBatches: state.publishBatches,
           publishRecords: state.publishRecords,
           platforms: state.platforms,
+          cognitionRuns: state.cognitionRuns,
         } : {}),
       }),
       onRehydrateStorage: () => (state) => state?.setHydrated(true),

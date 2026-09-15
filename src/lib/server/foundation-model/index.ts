@@ -26,6 +26,8 @@ export type FoundationTaskResult<T> = {
   };
   latencyMs: number;
   attempts: number;
+  sources: Array<{ title: string; url: string }>;
+  webSearchUsed: boolean;
 };
 
 export async function executeFoundationTask<TSchema extends z.ZodType>(
@@ -70,7 +72,11 @@ export async function executeFoundationTask<TSchema extends z.ZodType>(
     );
   }
 
-  return buildTaskResult(options, repair, repaired.data, 2);
+  return buildTaskResult(options, {
+    ...repair,
+    sources: first.sources,
+    webSearchUsed: first.webSearchUsed,
+  }, repaired.data, 2);
 }
 
 export function getFoundationModelReadiness() {
@@ -168,6 +174,8 @@ function buildTaskResult<TSchema extends z.ZodType>(
     usage: response.usage,
     latencyMs: response.latencyMs,
     attempts,
+    sources: response.sources || [],
+    webSearchUsed: response.webSearchUsed === true,
   };
 }
 

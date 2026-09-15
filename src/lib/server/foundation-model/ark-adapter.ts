@@ -30,6 +30,7 @@ export const arkFoundationModel: FoundationModelAdapter = {
     const apiKey = process.env.GEO_FOUNDATION_API_KEY?.trim();
     const model = request.model?.trim() || readModel();
     const baseUrl = readBaseUrl();
+    const endpoint = request.enableWebSearch ? readResponsesUrl(baseUrl) : baseUrl;
 
     if (!apiKey) {
       throw new FoundationModelError(
@@ -46,26 +47,34 @@ export const arkFoundationModel: FoundationModelAdapter = {
     const startedAt = Date.now();
 
     try {
-      const response = await fetch(baseUrl, {
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          model,
-          stream: false,
-          messages: [
-            {
-              role: "system",
-              content: "你是GEO网站的底座模型助手，请严格按照用户要求输出结果。",
-            },
-            {
-              role: "user",
-              content: request.prompt,
-            },
-          ],
-        }),
+        body: JSON.stringify(request.enableWebSearch
+          ? {
+              model,
+              store: false,
+              instructions: "你是GEO网站的底座模型助手，请严格按照用户要求输出结果。",
+              input: request.prompt,
+              tools: [{ type: "web_search" }],
+            }
+          : {
+              model,
+              stream: false,
+              messages: [
+                {
+                  role: "system",
+                  content: "你是GEO网站的底座模型助手，请严格按照用户要求输出结果。",
+                },
+                {
+                  role: "user",
+                  content: request.prompt,
+                },
+              ],
+            }),
         cache: "no-store",
         signal: controller.signal,
       });
@@ -74,7 +83,9 @@ export const arkFoundationModel: FoundationModelAdapter = {
       if (!response.ok) {
         throw classifyArkFailure(response.status, payload);
       }
-      return normalizeResponse(payload, model, Date.now() - startedAt);
+      return request.enableWebSearch
+        ? normalizeResponsesApiResponse(payload, model, Date.now() - startedAt)
+        : normalizeResponse(payload, model, Date.now() - startedAt);
     } catch (error) {
       if (error instanceof FoundationModelError) throw error;
       if (error instanceof Error && error.name === "AbortError") {
@@ -116,6 +127,24 @@ function readBaseUrl() {
       "configuration",
       false,
       "invalid_base_url",
+    );
+  }
+}
+
+function readResponsesUrl(chatUrl: string) {
+  const configured = process.env.GEO_FOUNDATION_RESPONSES_URL?.trim();
+  const candidate = configured || chatUrl.replace(/\/chat\/completions\/?$/, "/responses");
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error();
+    return url.toString();
+  } catch {
+    throw new FoundationModelError(
+      "GEO_FOUNDATION_RESPONSES_URL 配置不正确",
+      503,
+      "configuration",
+      false,
+      "invalid_responses_url",
     );
   }
 }
@@ -204,6 +233,57 @@ function normalizeResponse(
     answer,
     usage: normalizeUsage(payload.usage),
     latencyMs,
+  };
+}
+
+function normalizeResponsesApiResponse(
+  payload: UnknownRecord,
+  fallbackModel: string,
+  latencyMs: number,
+): FoundationModelResult {
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  const textParts: string[] = [];
+  const sourceByUrl = new Map<string, { title: string; url: string }>();
+  let webSearchUsed = false;
+  for (const rawItem of output) {
+    const item = asRecord(rawItem);
+    if (!item) continue;
+    if (item.type === "web_search_call") webSearchUsed = true;
+    const content = Array.isArray(item.content) ? item.content : [];
+    for (const rawContent of content) {
+      const contentItem = asRecord(rawContent);
+      const contentText = firstString(contentItem?.text);
+      if (contentText) textParts.push(contentText);
+      const annotations = Array.isArray(contentItem?.annotations) ? contentItem.annotations : [];
+      for (const rawAnnotation of annotations) {
+        const annotation = asRecord(rawAnnotation);
+        const nestedCitation = asRecord(annotation?.url_citation);
+        const url = firstString(annotation?.url, nestedCitation?.url);
+        if (!url) continue;
+        const title = firstString(annotation?.title, nestedCitation?.title) || url;
+        sourceByUrl.set(url, { title, url });
+      }
+    }
+  }
+  const answer = textParts.join("\n\n").trim() || firstString(payload.output_text);
+  if (!answer) {
+    throw new FoundationModelError(
+      "底座模型已响应，但未返回可识别的正文",
+      502,
+      "invalid_response",
+      true,
+      "empty_answer",
+    );
+  }
+  return {
+    provider: "ark",
+    requestId: typeof payload.id === "string" ? payload.id : undefined,
+    model: typeof payload.model === "string" ? payload.model : fallbackModel,
+    answer,
+    usage: normalizeUsage(payload.usage),
+    latencyMs,
+    sources: [...sourceByUrl.values()],
+    webSearchUsed,
   };
 }
 

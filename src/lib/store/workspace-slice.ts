@@ -49,6 +49,7 @@ export function createWorkspaceSlice(
       publishBatches: [],
       publishRecords: [],
       platforms: [],
+      cognitionRuns: [],
       workspaceLoaded: false,
       workspaceStatus: "idle",
       workspaceError: "",
@@ -69,6 +70,7 @@ export function createWorkspaceSlice(
         publishBatches: next.publishBatches,
         publishRecords: next.publishRecords,
         platforms: next.platforms,
+        cognitionRuns: [],
       });
     },
     updateUser: (patch) => dependencies.applyPersistedProjection(get().dataMode, () => {

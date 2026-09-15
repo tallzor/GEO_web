@@ -86,10 +86,15 @@ export function Toast({ message, onClose }: { message: string; onClose: () => vo
   return <div className="toast"><span style={{ display: "flex", alignItems: "center", gap: 8 }}><CheckCircle2 size={17} />{message}</span></div>;
 }
 
-export function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: ReactNode }) {
+export function Field({ label, required, hint, error, children }: { label: string; required?: boolean; hint?: string; error?: string; children: ReactNode }) {
   const generatedId = useId();
-  const child = isValidElement(children) ? children as ReactElement<{ id?: string }> : null;
+  const child = isValidElement(children) ? children as ReactElement<{ id?: string; "aria-invalid"?: boolean; "aria-describedby"?: string }> : null;
   const controlId = child?.props.id || generatedId;
-  const control = child ? cloneElement(child, { id: controlId }) : children;
-  return <div className="field"><label htmlFor={controlId}>{label}{required && <span className="required">*</span>}</label>{control}{hint && <span className="field-hint">{hint}</span>}</div>;
+  const errorId = `${controlId}-error`;
+  const control = child ? cloneElement(child, {
+    id: controlId,
+    "aria-invalid": Boolean(error),
+    "aria-describedby": error ? errorId : child.props["aria-describedby"],
+  }) : children;
+  return <div className="field"><label htmlFor={controlId}>{label}{required && <span className="required">*</span>}</label>{control}{error ? <span className="field-error" id={errorId}>{error}</span> : hint && <span className="field-hint">{hint}</span>}</div>;
 }

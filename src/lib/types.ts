@@ -49,6 +49,13 @@ export type ProductService = {
   price: string;
   features: string;
   audience: string;
+  scenarios: string;
+  advantages: string;
+  problemsSolved: string;
+  quantitativeFacts: string;
+  evidence: string;
+  limitations: string;
+  otherInfo: string;
   updatedAt: string;
 };
 
@@ -60,12 +67,15 @@ export type Competitor = {
 
 export type KnowledgeAttachment = {
   id: Id;
+  productId?: Id;
   fileName: string;
   fileType: string;
   sizeLabel: string;
-  status: "parsing" | "active" | "failed";
-  factCount: number;
+  status: "uploading" | "uploaded" | "failed";
+  /** 旧数据兼容；v0.3.0 不解析附件，也不展示事实数量。 */
+  factCount?: number;
   uploadedAt: string;
+  uploadedBy?: string;
   error?: string;
 };
 
@@ -87,12 +97,19 @@ export type Brand = {
   trustProof: string;
   positioningStatement: string;
   industry: string;
+  industryCode: string;
+  industryPath: string;
+  industryStandard: string;
   website: string;
   intro: string;
   city: string;
   stores: StoreLocation[];
   serviceArea: string;
   targetAudience: string;
+  coreScenarios: string;
+  valuePromise: string;
+  cognitionBoundary: string;
+  otherInfo: string;
   products: ProductService[];
   competitors: Competitor[];
   knowledge: KnowledgeAttachment[];
@@ -101,6 +118,121 @@ export type Brand = {
   questionsGeneratedAt?: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type CognitionRunStatus =
+  | "queued"
+  | "analyzing"
+  | "review_required"
+  | "confirmed"
+  | "failed";
+
+export type CognitionSupportStatus =
+  | "supported"
+  | "partially_supported"
+  | "insufficient"
+  | "conflicting";
+
+export type CognitionReference = {
+  title: string;
+  url: string;
+};
+
+export type CognitionInsightItem = {
+  key: string;
+  label: string;
+  conclusion: string;
+  supportStatus: CognitionSupportStatus;
+  inputFields: string[];
+  webReferences: CognitionReference[];
+  missingOrConflict: string;
+};
+
+export type CognitionInsight = {
+  id: Id;
+  runId: Id;
+  brandId: Id;
+  subjectType: "brand" | "product";
+  subjectId: Id;
+  subjectName: string;
+  modelType: "brand_six_elements" | "bfabeww";
+  items: CognitionInsightItem[];
+  status: "draft" | "confirmed";
+  version: number;
+  isCurrent: boolean;
+  provider: string;
+  model: string;
+  promptVersion: string;
+  webSearchUsed: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CognitionRun = {
+  id: Id;
+  brandId: Id;
+  brandName: string;
+  status: CognitionRunStatus;
+  error?: string;
+  attempt: number;
+  inputSnapshot: CognitionInputSnapshot;
+  insights: CognitionInsight[];
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  confirmedAt?: string;
+};
+
+export type CognitionBrandInput = Pick<
+  Brand,
+  | "id"
+  | "name"
+  | "shortName"
+  | "characteristics"
+  | "categoryName"
+  | "trustProof"
+  | "positioningStatement"
+  | "industry"
+  | "industryCode"
+  | "industryPath"
+  | "industryStandard"
+  | "website"
+  | "intro"
+  | "serviceArea"
+  | "targetAudience"
+  | "coreScenarios"
+  | "valuePromise"
+  | "cognitionBoundary"
+  | "otherInfo"
+>;
+
+export type CognitionInputSnapshot = {
+  brand: CognitionBrandInput;
+  products: CognitionProductInput[];
+  competitors: Competitor[];
+};
+
+export type CognitionProductInput = Pick<
+  ProductService,
+  | "id"
+  | "name"
+  | "type"
+  | "description"
+  | "features"
+  | "audience"
+  | "scenarios"
+  | "advantages"
+  | "problemsSolved"
+  | "quantitativeFacts"
+  | "evidence"
+  | "limitations"
+  | "otherInfo"
+>;
+
+export type CognitionInsightRevision = {
+  insightId: Id;
+  items: Array<{ key: string; conclusion: string }>;
 };
 
 export type Citation = {

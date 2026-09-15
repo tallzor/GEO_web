@@ -22,6 +22,8 @@ const tables = [
   "brand_products",
   "brand_competitors",
   "brand_knowledge_files",
+  "cognition_runs",
+  "cognition_insights",
   "detection_questions",
   "detections",
   "detection_results",

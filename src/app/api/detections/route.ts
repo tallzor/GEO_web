@@ -42,6 +42,13 @@ const requestSchema = z.object({
       price: optionalLegacyText(300),
       features: optionalLegacyText(1_000),
       audience: optionalLegacyText(1_000),
+      scenarios: optionalLegacyText(1_000),
+      advantages: optionalLegacyText(1_000),
+      problemsSolved: optionalLegacyText(1_000),
+      quantitativeFacts: optionalLegacyText(1_000),
+      evidence: optionalLegacyText(1_000),
+      limitations: optionalLegacyText(1_000),
+      otherInfo: optionalLegacyText(2_000),
       updatedAt: optionalLegacyText(100),
     })).max(50).optional().default([]),
     competitors: z.array(z.object({

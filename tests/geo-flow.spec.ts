@@ -159,10 +159,54 @@ test("旧演示发布数据升级时清除无效记录和平台状态", async ({
   await page.waitForLoadState("networkidle");
   const migrated = await page.evaluate(() => JSON.parse(localStorage.getItem("geo-web-demo-v3") || "{}"));
 
-  expect(migrated.version).toBe(4);
+  expect(migrated.version).toBe(5);
   expect(migrated.state.publishBatches).toEqual([]);
   expect(migrated.state.publishRecords).toEqual([]);
   expect(migrated.state.platforms).toEqual([]);
+});
+
+test("v0.3.0：从品牌事实输入到一次确认认知洞察", async ({ page }) => {
+  await page.goto("/brands/new");
+  await page.getByLabel("品牌名称").fill("清衡食品");
+  await page.getByLabel("所属行业").selectOption("C");
+  await page.getByLabel("品牌简介").fill("面向城市消费者提供低糖即饮饮品的成长型品牌。");
+  await page.getByLabel("核心受众").fill("关注配料和糖分的城市消费者");
+  await page.getByRole("button", { name: "下一步" }).click();
+
+  await page.getByRole("button", { name: "新增产品" }).click();
+  await page.getByLabel("产品或服务名称").fill("清衡低糖茶");
+  await page.getByLabel(/简介/).fill("一款低糖即饮茶饮料。");
+  await page.getByLabel("应用场景").fill("工作和用餐时即饮");
+  await page.getByLabel("优势").fill("比常规含糖茶饮糖分更低");
+  await page.getByRole("button", { name: "下一步" }).click();
+  await page.getByRole("button", { name: "完成并开始分析" }).click();
+
+  await expect(page).toHaveURL(/brand\/cognition\//);
+  await expect(page.getByRole("heading", { name: "认知洞察" })).toBeVisible();
+  await expect(page.getByText("品牌认知六要素")).toBeVisible();
+  await expect(page.getByText(/BFABEWW/).first()).toBeVisible();
+  const advantageEditor = page.locator(".cognition-item").filter({ hasText: "Advantage｜优势" }).locator("textarea");
+  await expect(advantageEditor).toHaveValue(/待验证主张：比常规含糖茶饮糖分更低/);
+  await advantageEditor.fill("客户审核结论：当前优势证据不足");
+  await page.getByRole("button", { name: "一次确认全部洞察" }).click();
+  await expect(page.getByText("已确认", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/认知基准 v1/).first()).toBeVisible();
+  await expect(page.getByText("客户审核结论：当前优势证据不足")).toBeVisible();
+  await expect(page.getByRole("button", { name: "一次确认全部洞察" })).toHaveCount(0);
+
+  const savedAdvantage = await page.evaluate(() => {
+    const persisted = JSON.parse(localStorage.getItem("geo-web-demo-v3") || "{}");
+    const brands = persisted.state?.brands as Array<{ name: string; products: Array<{ advantages: string }> }> | undefined;
+    return brands?.find((brand) => brand.name === "清衡食品")?.products[0]?.advantages;
+  });
+  expect(savedAdvantage).toBe("比常规含糖茶饮糖分更低");
+
+  await page.goto("/brand/products");
+  await page.getByRole("button", { name: "编辑" }).click();
+  await page.getByLabel("应用限制").fill("不适合对茶成分过敏的人群");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.goto("/brand/cognition");
+  await expect(page.getByRole("button", { name: "更新洞察" })).toBeVisible();
 });
 
 test("核心流程：档案、AI平台真实回答、内容和发布记录", async ({ page }, testInfo) => {
@@ -250,7 +294,7 @@ test("检测接口兼容旧品牌档案缺失的选填字段", async ({ page }) 
 test("工作台：品牌摘要、合并进度和七日任务切换", async ({ page }, testInfo) => {
   const brandCard = page.locator(".workbench-brand-card");
   await expect(brandCard.getByText("产品数量 2", { exact: true })).toBeVisible();
-  await expect(brandCard.getByText("健身", { exact: true })).toBeVisible();
+  await expect(brandCard.getByText("文化、体育和娱乐业", { exact: true })).toBeVisible();
   await expect(brandCard.getByText("上海浦东新区", { exact: true })).toBeVisible();
   await expect(brandCard.getByLabel("档案完整度 100%")).toBeVisible();
   await expect(page.getByRole("link", { name: "编辑品牌信息" })).toHaveAttribute("href", "/brand/basic");
@@ -290,7 +334,7 @@ test("工作台：品牌摘要、合并进度和七日任务切换", async ({ pa
 test("品牌隔离：新建品牌后工作空间切换", async ({ page }) => {
   await page.goto("/brands/new");
   await page.getByLabel("品牌名称").fill("测试健身馆");
-  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.getByRole("button", { name: "保存草稿", exact: true }).click();
   await expect(page).toHaveURL(/workbench/);
   await expect(page.getByRole("heading", { name: "测试健身馆", exact: true })).toBeVisible();
   await expect(page.locator(".workbench-brand-card").getByText("产品数量 0", { exact: true })).toBeVisible();
@@ -304,38 +348,38 @@ test("品牌隔离：新建品牌后工作空间切换", async ({ page }) => {
   await expect(page.getByText("尚未进行检测")).toBeVisible();
 });
 
-test("新建品牌：三步向导可跳过并保存产品与竞品", async ({ page }) => {
+test("新建品牌：三步向导保存产品与选填竞品", async ({ page }) => {
   await page.goto("/brands/new");
   await expect(page.getByRole("heading", { name: "基本信息" })).toBeVisible();
-  await page.getByLabel("品牌名称").fill("三步健身馆");
-  await page.getByLabel("所属行业").selectOption({ label: "健身" });
-  await page.getByLabel("服务市场").fill("上海徐汇区");
+  await page.getByLabel("品牌名称").fill("三步品牌");
+  await page.getByLabel("所属行业").selectOption("C");
+  await page.getByLabel("品牌简介").fill("一家提供消费产品的成长型品牌。");
+  await page.getByLabel("服务市场").fill("全国");
   await page.getByRole("button", { name: "下一步", exact: true }).click();
 
-  await expect(page.getByRole("heading", { name: "产品信息" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "产品或服务" })).toBeVisible();
   await page.getByRole("button", { name: "下一步", exact: true }).click();
   await expect(page.getByRole("heading", { name: "竞品信息" })).toBeVisible();
   await page.getByRole("button", { name: "上一步", exact: true }).click();
 
   await page.getByRole("button", { name: "新增产品", exact: true }).click();
-  await page.getByLabel("产品名称").fill("零基础体验课");
-  await page.getByLabel("产品简介").fill("面向健身新手的一次体验课程");
-  await page.getByLabel("价格说明").fill("99元/次");
+  await page.getByLabel("产品或服务名称").fill("轻盈饮品");
+  await page.getByLabel(/简介/).fill("面向日常饮用场景的消费产品。");
+  await page.getByLabel("应用场景").fill("工作与用餐");
   await page.getByRole("button", { name: "下一步", exact: true }).click();
 
   await page.getByRole("button", { name: "新增竞品", exact: true }).click();
-  await page.getByLabel("竞品名称").fill("对比健身馆");
-  await page.getByLabel("竞品描述").fill("徐汇区综合健身房");
-  await page.getByRole("button", { name: "完成", exact: true }).click();
+  await page.getByLabel("竞品名称").fill("对比品牌");
+  await page.getByLabel("竞品描述").fill("同类消费产品品牌");
+  await page.getByRole("button", { name: "完成并开始分析", exact: true }).click();
 
-  await expect(page).toHaveURL(/workbench/);
-  await expect(page.getByRole("heading", { name: "三步健身馆", exact: true })).toBeVisible();
-  await expect(page.locator(".workbench-brand-card").getByText("产品数量 1", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/brand\/cognition\//);
+  await expect(page.getByRole("heading", { name: "认知洞察", exact: true })).toBeVisible();
 
   await page.goto("/brand/products");
-  await expect(page.getByRole("heading", { name: "零基础体验课", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "轻盈饮品", exact: true })).toBeVisible();
   await page.goto("/brand/competitors");
-  await expect(page.getByRole("heading", { name: "对比健身馆", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "对比品牌", exact: true })).toBeVisible();
 });
 
 test("品牌档案：固定品牌标题、只读编辑和三类名称搜索", async ({ page }, testInfo) => {
@@ -349,7 +393,7 @@ test("品牌档案：固定品牌标题、只读编辑和三类名称搜索", as
   await page.getByRole("button", { name: "编辑" }).click();
   await expect(page.getByLabel("品牌名称")).toHaveValue("跃动健身");
   const editCard = page.locator(".brand-edit-card");
-  await expect(editCard.locator(".card-header").getByText("仅品牌名称必填；其他资料越完整，系统生成的问题越贴合。")).toBeVisible();
+  await expect(editCard.locator(".card-header").getByText(/修改事实不会自动改写已确认洞察/)).toBeVisible();
   await expect(editCard.locator(".card-body .notice")).toHaveCount(0);
   await expect(editCard.locator(".card-header").getByRole("button", { name: "取消" })).toBeVisible();
   await expect(editCard.locator(".card-header").getByRole("button", { name: "保存信息" })).toBeVisible();
@@ -407,6 +451,9 @@ test("品牌档案：固定品牌标题、只读编辑和三类名称搜索", as
   await page.getByLabel("搜索附件名称").fill("课程资料");
   await expect(page.getByRole("heading", { name: "跃动健身品牌与课程资料.pdf" })).toBeVisible();
   await expect(page.locator(".brand-record-row")).toHaveCount(1);
+  await expect(page.getByText("已上传", { exact: true })).toBeVisible();
+  await expect(page.getByText(/仅保存并展示附件，不解析内容/)).toBeVisible();
+  await expect(page.getByText("提取事实", { exact: true })).toHaveCount(0);
 
   await page.goto("/brand/basic");
   await page.getByRole("button", { name: "编辑" }).click();
@@ -516,7 +563,7 @@ test("问答素材支持复制且复制后不会自动完成任务", async ({ pa
 
 test("全部页面可访问且无运行时错误页", async ({ page }) => {
   const routes = [
-    "/workbench", "/brand", "/brand/basic", "/brand/products", "/brand/competitors", "/brand/knowledge",
+    "/workbench", "/brand", "/brand/basic", "/brand/products", "/brand/competitors", "/brand/knowledge", "/brand/cognition",
     "/geo", "/geo/questions", "/geo/questions/generate", "/geo/new", "/geo/progress/detection_latest",
     "/geo/results/detection_latest", "/geo/records", "/analysis/visibility", "/analysis/reputation", "/analysis/competitors", "/tasks", "/content/content_current",
     "/publishes", "/settings/profile", "/settings/brands", "/settings/platforms", "/settings/subscription",

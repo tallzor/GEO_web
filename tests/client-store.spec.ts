@@ -13,6 +13,10 @@ function createTestStore(overrides: Partial<StoreRemotePort> = {}) {
     retryDetection: async () => { throw new Error("未配置检测重试结果"); },
     createOptimizationCycle: async () => { throw new Error("未配置优化周期结果"); },
     generateOptimizationContent: async () => { throw new Error("未配置内容生成结果"); },
+    startCognition: async () => { throw new Error("未配置认知分析结果"); },
+    getCognition: async () => undefined,
+    retryCognition: async () => { throw new Error("未配置认知分析重试结果"); },
+    confirmCognition: async () => { throw new Error("未配置认知确认结果"); },
     ...overrides,
   };
   const dependencies: StoreDependencies = {
@@ -87,6 +91,36 @@ test("同一任务并发生成内容时只发起一次远程请求", async () =>
   expect(requestCount).toBe(1);
   expect(projectionCount()).toBe(1);
   expect(store.getState().contents.filter((item) => item.taskId === task.id)).toHaveLength(1);
+});
+
+test("本地认知建立保持幂等，确认洞察不改写事实", async () => {
+  const { store } = createTestStore();
+  const brandId = store.getState().currentBrandId;
+  const factsBefore = structuredClone(store.getState().brands.find((brand) => brand.id === brandId)!);
+
+  const firstId = await store.getState().startCognition(brandId);
+  const repeatedId = await store.getState().startCognition(brandId);
+  expect(repeatedId).toBe(firstId);
+  expect(store.getState().cognitionRuns).toHaveLength(1);
+
+  const run = store.getState().cognitionRuns[0];
+  const revisions = run.insights.map((insight) => ({
+    insightId: insight.id,
+    items: insight.items.map((item) => ({
+      key: item.key,
+      conclusion: item.key === "advantage" ? "客户审核后的洞察" : item.conclusion,
+    })),
+  }));
+  await store.getState().confirmCognition(run.id, revisions);
+
+  expect(store.getState().brands.find((brand) => brand.id === brandId)).toEqual(factsBefore);
+  expect(store.getState().cognitionRuns[0].status).toBe("confirmed");
+  expect(store.getState().cognitionRuns[0].insights.every((insight) => insight.isCurrent)).toBe(true);
+
+  const product = factsBefore.products[0];
+  store.getState().updateProduct(brandId, product.id, { limitations: "新增适用限制" });
+  const updatedId = await store.getState().startCognition(brandId);
+  expect(updatedId).not.toBe(firstId);
 });
 
 test("品牌删除投影会同步清理所有关联领域数据", () => {

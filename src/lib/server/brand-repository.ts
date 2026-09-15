@@ -47,11 +47,18 @@ export async function saveBrandSnapshots(account: AccountContext, brands: Brand[
     trust_proof: brand.trustProof || null,
     positioning_statement: brand.positioningStatement || null,
     industry: brand.industry || null,
+    industry_code: brand.industryCode || null,
+    industry_path: brand.industryPath || null,
+    industry_standard: brand.industryStandard || null,
     website: brand.website || null,
     intro: brand.intro || null,
     city: brand.city || null,
     service_area: brand.serviceArea || null,
     target_audience: brand.targetAudience || null,
+    core_scenarios: brand.coreScenarios || null,
+    value_promise: brand.valuePromise || null,
+    cognition_boundary: brand.cognitionBoundary || null,
+    other_info: brand.otherInfo || null,
     question_context_updated_at: brand.questionContextUpdatedAt || null,
     questions_generated_at: brand.questionsGeneratedAt || null,
     created_by: account.userId,
@@ -68,7 +75,10 @@ export async function saveBrandSnapshots(account: AccountContext, brands: Brand[
       syncBrandRows(supabase, "brand_products", organizationId, brand.id, brand.products.map((item, index) => ({
         id: item.id, organization_id: organizationId, brand_id: brand.id, name: item.name, type: item.type || null,
         description: item.description || null, price: item.price || null, features: item.features || null,
-        audience: item.audience || null, sort_order: index, updated_at: item.updatedAt,
+        audience: item.audience || null, scenarios: item.scenarios || null, advantages: item.advantages || null,
+        problems_solved: item.problemsSolved || null, quantitative_facts: item.quantitativeFacts || null,
+        evidence: item.evidence || null, limitations: item.limitations || null, other_info: item.otherInfo || null,
+        sort_order: index, updated_at: item.updatedAt,
       }))),
       syncBrandRows(supabase, "brand_competitors", organizationId, brand.id, brand.competitors.map((item, index) => ({
         id: item.id, organization_id: organizationId, brand_id: brand.id, name: item.name,
@@ -76,9 +86,11 @@ export async function saveBrandSnapshots(account: AccountContext, brands: Brand[
       }))),
       syncBrandRows(supabase, "brand_knowledge_files", organizationId, brand.id, brand.knowledge.map((item) => ({
         id: item.id, organization_id: organizationId, brand_id: brand.id, file_name: item.fileName,
+        product_id: item.productId || null,
         file_type: item.fileType || null, object_path: `${organizationId}/${brand.id}/${item.id}/${safeObjectName(item.fileName)}`,
-        size_label: item.sizeLabel || null, status: item.status, fact_count: item.factCount,
-        error: item.error || null, uploaded_by: account.userId, created_at: item.uploadedAt,
+        size_label: item.sizeLabel || null, status: item.status, fact_count: item.factCount || 0,
+        error: item.error || null, uploaded_by: account.userId, uploaded_by_name: item.uploadedBy || account.displayName,
+        created_at: item.uploadedAt,
       }))),
       syncQuestionRows(supabase, organizationId, brand.id, brand.questions.map((item) => ({
         id: item.id, organization_id: organizationId, brand_id: brand.id, text: item.text,
@@ -91,6 +103,7 @@ export async function saveBrandSnapshots(account: AccountContext, brands: Brand[
 export async function uploadBrandKnowledgeFile(account: AccountContext, input: {
   brandId: string;
   attachmentId: string;
+  productId?: string;
   fileName: string;
   extension: string;
   contentType: string;
@@ -103,6 +116,7 @@ export async function uploadBrandKnowledgeFile(account: AccountContext, input: {
   assertUuid(input.attachmentId, "附件ID");
   const supabase = createSupabaseAdminClient();
   await assertActiveBrand(supabase, organizationId, input.brandId);
+  if (input.productId) await assertProductBelongsToBrand(supabase, organizationId, input.brandId, input.productId);
   await assertIdsOwned(supabase, "brand_knowledge_files", organizationId, [input.attachmentId]);
 
   const objectPath = `${organizationId}/${input.brandId}/${input.attachmentId}/${safeObjectName(input.fileName)}`;
@@ -116,20 +130,36 @@ export async function uploadBrandKnowledgeFile(account: AccountContext, input: {
     id: input.attachmentId,
     organization_id: organizationId,
     brand_id: input.brandId,
+    product_id: input.productId || null,
     file_name: input.fileName,
     file_type: input.extension.toUpperCase(),
     object_path: objectPath,
     size_bytes: input.size,
     size_label: input.sizeLabel,
-    status: "active",
+    status: "uploaded",
     fact_count: 0,
     uploaded_by: account.userId,
+    uploaded_by_name: account.displayName,
   }, { onConflict: "id" });
   if (inserted.error) {
     await supabase.storage.from("brand-knowledge").remove([objectPath]);
     throw new Error(inserted.error.message);
   }
   return { objectPath };
+}
+
+export async function getBrandKnowledgeDownloadUrl(account: AccountContext, attachmentId: string) {
+  const organizationId = requireOrganization(account);
+  assertUuid(attachmentId, "附件ID");
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase.from("brand_knowledge_files").select("object_path")
+    .eq("organization_id", organizationId).eq("id", attachmentId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new WorkspaceAccessError("附件不存在", 404);
+  const objectPath = text(data.object_path);
+  const signed = await supabase.storage.from("brand-knowledge").createSignedUrl(objectPath, 60);
+  if (signed.error || !signed.data?.signedUrl) throw new Error(signed.error?.message || "附件下载地址生成失败");
+  return signed.data.signedUrl;
 }
 
 export async function deleteBrandKnowledgeFile(account: AccountContext, attachmentId: string) {
@@ -241,6 +271,19 @@ async function assertActiveBrand(supabase: SupabaseAdmin, organizationId: string
     .eq("organization_id", organizationId).eq("id", brandId).is("deleted_at", null).maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) throw new WorkspaceAccessError("品牌不属于当前组织", 403);
+}
+
+async function assertProductBelongsToBrand(
+  supabase: SupabaseAdmin,
+  organizationId: string,
+  brandId: string,
+  productId: string,
+) {
+  assertUuid(productId, "产品ID");
+  const { data, error } = await supabase.from("brand_products").select("id")
+    .eq("organization_id", organizationId).eq("brand_id", brandId).eq("id", productId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new WorkspaceAccessError("附件产品归属不正确", 400);
 }
 
 async function upsertOrThrow(

@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { deleteBrandKnowledgeFile, uploadBrandKnowledgeFile } from "@/lib/server/brand-repository";
+import {
+  deleteBrandKnowledgeFile,
+  getBrandKnowledgeDownloadUrl,
+  uploadBrandKnowledgeFile,
+} from "@/lib/server/brand-repository";
 import { isSupabaseDataBackendEnabled } from "@/lib/supabase/env";
 import { requireWorkspaceAccount, WorkspaceAccessError } from "@/lib/server/workspace-access";
 
@@ -16,6 +20,7 @@ export async function POST(request: Request) {
     const form = await request.formData();
     const brandId = String(form.get("brandId") || "");
     const attachmentId = String(form.get("attachmentId") || "");
+    const productId = String(form.get("productId") || "");
     const file = form.get("file");
     if (!account.organizationId || !uuidPattern.test(brandId) || !uuidPattern.test(attachmentId)) {
       return NextResponse.json({ error: "附件归属信息不正确" }, { status: 400 });
@@ -33,6 +38,7 @@ export async function POST(request: Request) {
     const { objectPath } = await uploadBrandKnowledgeFile(account, {
       brandId,
       attachmentId,
+      productId: productId || undefined,
       fileName: file.name,
       extension,
       contentType: file.type,
@@ -43,6 +49,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, objectPath });
   } catch (error) {
     return apiError(error, "附件上传失败");
+  }
+}
+
+export async function GET(request: Request) {
+  if (!isSupabaseDataBackendEnabled()) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  try {
+    const account = await requireWorkspaceAccount();
+    const id = new URL(request.url).searchParams.get("id") || "";
+    if (!account.organizationId || !uuidPattern.test(id)) {
+      return NextResponse.json({ error: "附件ID不正确" }, { status: 400 });
+    }
+    const url = await getBrandKnowledgeDownloadUrl(account, id);
+    return NextResponse.json({ url }, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    return apiError(error, "附件下载失败");
   }
 }
 

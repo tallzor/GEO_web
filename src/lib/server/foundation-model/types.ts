@@ -7,7 +7,9 @@ export type FoundationTaskType =
   | "seven_day_plan"
   | "content_generation"
   | "content_review"
-  | "question_generation";
+  | "question_generation"
+  | "brand_cognition"
+  | "product_cognition";
 
 export type FoundationModelRequest = {
   prompt: string;
@@ -26,6 +28,8 @@ export type FoundationModelResult = {
     totalTokens?: number;
   };
   latencyMs: number;
+  sources?: Array<{ title: string; url: string }>;
+  webSearchUsed?: boolean;
 };
 
 export type FoundationModelAdapter = {
