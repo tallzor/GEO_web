@@ -64,7 +64,7 @@ export function completedDetectionsForBrand(detections: Detection[], brandId: st
 }
 
 function isVerifiedLiveAnalysis(detection: Detection) {
-  if (detection.dataSource !== "live_api" || !detection.diagnosis || !detection.analysisModel) return false;
+  if (detection.dataSource !== "live_api" || (!detection.resultSummary && !detection.diagnosis) || !detection.analysisModel) return false;
   if (isTestModel(detection.analysisModel)) return false;
   return detection.results.every((result) =>
     result.dataSource === "live_api"

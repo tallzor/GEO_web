@@ -20,6 +20,59 @@ export type RecommendationType =
   | "discouraged"
   | "not_mentioned";
 
+export type PresentationRole =
+  | "top_recommendation"
+  | "alternative"
+  | "general_mention"
+  | "risk_warning"
+  | "negative_counterexample"
+  | "not_mentioned";
+
+export type RiskSignal =
+  | "none_detected"
+  | "cautious_description"
+  | "negative_counterexample";
+
+export type CitationSourceCategory =
+  | "industry_association"
+  | "authoritative_media"
+  | "research_institution"
+  | "standards_organization"
+  | "trusted_platform"
+  | "brand_official"
+  | "other"
+  | "unknown";
+
+export type GeoResultFilter = {
+  targetMentioned?: boolean;
+  presentationRole?: PresentationRole;
+  riskSignal?: RiskSignal;
+  sourceCategory?: CitationSourceCategory;
+};
+
+export type GeoFinding = {
+  id: Id;
+  text: string;
+  filter?: GeoResultFilter;
+};
+
+export type GeoDetectionSummary = {
+  requestedCount: number;
+  validCount: number;
+  failedCount: number;
+  mentionedAnswerCount: number;
+  unmentionedAnswerCount: number;
+  totalMentionCount: number;
+  naturalEligibleCount: number;
+  naturalMentionedCount: number;
+  presentationRoleCounts: Record<PresentationRole, number>;
+  riskSignalCounts: Record<RiskSignal, number>;
+  sourceCategoryCounts: Record<CitationSourceCategory, number>;
+  uniqueCitationCount: number;
+  findings: GeoFinding[];
+  analysisVersion: string;
+};
+
 export type SentimentLabel = "积极" | "中性" | "需改善";
 
 export type RankedBrandMention = {
@@ -322,6 +375,8 @@ export type Citation = {
   excerpt: string;
   relevance: "高" | "中" | "低";
   credibility: "高" | "中" | "低";
+  normalizedUrl?: string;
+  sourceCategory?: CitationSourceCategory;
 };
 
 export type DetectionSample = {
@@ -351,6 +406,12 @@ export type DetectionResult = {
   questionId: Id;
   answer: string;
   brandMentioned: boolean;
+  targetMentioned?: boolean;
+  directQuestion?: boolean;
+  presentationRole?: PresentationRole;
+  presentationEvidence?: string;
+  riskSignal?: RiskSignal;
+  riskEvidence?: string;
   recommended: boolean;
   recommendationPosition: string;
   competitorMentions: string[];
@@ -455,6 +516,7 @@ export type Detection = {
   completedAt?: string;
   sourceDetectionId?: Id;
   results: DetectionResult[];
+  resultSummary?: GeoDetectionSummary;
   diagnosis?: Diagnosis;
   dataSource?: "mock" | "live_api";
   collectionMethod?: CollectionMethod;

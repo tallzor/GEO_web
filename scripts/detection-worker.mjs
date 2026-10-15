@@ -14,7 +14,7 @@ for (;;) {
     const response = await fetch(`${baseUrl}/api/detections/worker/run`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "x-worker-id": workerId },
-      signal: AbortSignal.timeout(300_000),
+      signal: AbortSignal.timeout(360_000),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const body = await response.json();

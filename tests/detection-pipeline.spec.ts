@@ -4,11 +4,16 @@ import path from "node:path";
 
 type PublicDetection = {
   id: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "partial" | "completed" | "failed";
   stage?: "queued" | "collecting" | "analyzing" | "aggregating" | "completed" | "failed";
   results: Array<{
     provider: string;
     questionId: string;
+    analysisModel?: string;
+    targetMentioned?: boolean;
+    directQuestion?: boolean;
+    presentationRole?: string;
+    riskSignal?: string;
     sentimentLabel?: "积极" | "中性" | "需改善";
     reputationTopics?: Array<{ sentimentLabel?: "积极" | "中性" | "需改善" }>;
   }>;
@@ -21,6 +26,17 @@ type PublicDetection = {
       reason: string;
     }>;
     suggestionStatus?: "not_generated" | "generating" | "generated" | "failed";
+  };
+  resultSummary?: {
+    requestedCount: number;
+    validCount: number;
+    failedCount: number;
+    mentionedAnswerCount: number;
+    naturalEligibleCount: number;
+    naturalMentionedCount: number;
+    presentationRoleCounts: Record<string, number>;
+    riskSignalCounts: Record<string, number>;
+    findings: Array<{ text: string }>;
   };
 };
 
@@ -83,7 +99,7 @@ async function waitForStatus(
   throw new Error(`等待检测状态 ${expected} 超时，最后状态：${last?.status || "unknown"}`);
 }
 
-test("检测完成不依赖优化建议，建议按需异步生成", async ({ request }) => {
+test("检测完成后生成可持久化的GEO结果汇总", async ({ request }) => {
   const id = `pipeline-${Date.now()}`;
   const created = await request.post("/api/detections", {
     data: detectionBody(id, ["普通用户会怎样选择本地服务？"]),
@@ -92,31 +108,17 @@ test("检测完成不依赖优化建议，建议按需异步生成", async ({ re
 
   const completed = await waitForStatus(request, id, "completed");
   expect(completed.results).toHaveLength(1);
-  expect(completed.results[0]).not.toHaveProperty("favorability");
-  expect(completed.results[0]?.reputationTopics?.[0]).not.toHaveProperty("sentiment");
-  expect(completed.diagnosis?.suggestions).toEqual([]);
-  expect(completed.diagnosis?.suggestionStatus).toBe("not_generated");
-
-  const firstRequest = await request.post(`/api/detections/${id}/suggestions`);
-  expect(firstRequest.status()).toBe(202);
-  const duplicateRequest = await request.post(`/api/detections/${id}/suggestions`);
-  expect(duplicateRequest.status()).toBe(202);
-
-  const deadline = Date.now() + 30_000;
-  let generated: PublicDetection | undefined;
-  while (Date.now() < deadline) {
-    await runWorkerStep(request);
-    generated = await readDetection(request, id);
-    if (generated.diagnosis?.suggestionStatus === "generated") break;
-    await new Promise((resolve) => setTimeout(resolve, 300));
-  }
-  expect(generated?.diagnosis?.suggestionStatus).toBe("generated");
-  expect(generated?.diagnosis?.suggestions).toHaveLength(1);
-  const suggestion = generated?.diagnosis?.suggestions[0];
-  expect(suggestion?.title).toBeTruthy();
-  expect(suggestion?.title).not.toMatch(/能见|排名|口碑|情感/);
-  expect(suggestion?.reason).toBeTruthy();
-  expect(suggestion?.description).toBeTruthy();
+  expect(completed.results[0]?.targetMentioned).toBe(true);
+  expect(completed.results[0]?.presentationRole).toBe("alternative");
+  expect(completed.results[0]?.riskSignal).toBe("none_detected");
+  expect(completed.resultSummary).toMatchObject({
+    requestedCount: 1,
+    validCount: 1,
+    failedCount: 0,
+    mentionedAnswerCount: 1,
+  });
+  expect(completed.resultSummary?.findings).toHaveLength(3);
+  expect(completed.diagnosis).toBeUndefined();
 
   const retryCompleted = await request.post(`/api/detections/${id}/retry`);
   expect(retryCompleted.status()).toBe(409);
@@ -132,9 +134,10 @@ test("失败重试只补缺失项，已保存结果不会重复", async ({ reque
   });
   expect(created.status()).toBe(202);
 
-  const failed = await waitForStatus(request, id, "failed");
-  expect(failed.results).toHaveLength(1);
-  expect(failed.runErrors?.length).toBeGreaterThan(0);
+  const partial = await waitForStatus(request, id, "partial");
+  expect(partial.results).toHaveLength(1);
+  expect(partial.resultSummary?.failedCount).toBe(1);
+  expect(partial.runErrors?.length).toBeGreaterThan(0);
 
   const retried = await request.post(`/api/detections/${id}/retry`);
   expect(retried.status()).toBe(202);
@@ -172,6 +175,26 @@ test("轻量状态查询不返回原始回答，也不触发执行", async ({ re
   expect(payload.status.id).toBe(id);
   expect(payload.status).not.toHaveProperty("results");
   expect(payload.status).not.toHaveProperty("diagnosis");
+  await waitForStatus(request, id, "completed");
+});
+
+test("单平台采集和逐题分析按配置并发推进", async ({ request }) => {
+  const id = `concurrent-batches-${Date.now()}`;
+  const created = await request.post("/api/detections", {
+    data: detectionBody(id, ["问题一", "问题二", "问题三", "问题四"]),
+  });
+  expect(created.status()).toBe(202);
+
+  await runWorkerStep(request);
+  expect((await readDetection(request, id)).results).toHaveLength(3);
+
+  await runWorkerStep(request);
+  expect((await readDetection(request, id)).results).toHaveLength(4);
+
+  await runWorkerStep(request);
+  await runWorkerStep(request);
+  const analyzed = await readDetection(request, id);
+  expect(analyzed.results.filter((item) => item.analysisModel)).toHaveLength(2);
 });
 
 test("可重试的临时错误自动重试一次后完成", async ({ request }) => {
@@ -198,14 +221,15 @@ test("429、5xx和空回答分类失败后只补跑失败单元", async ({ reque
   });
   expect(created.status()).toBe(202);
 
-  const failed = await waitForStatus(request, id, "failed");
-  expect(failed.results).toHaveLength(1);
-  expect(failed.runErrors?.map((item) => item.category).sort()).toEqual([
+  const partial = await waitForStatus(request, id, "partial");
+  expect(partial.results).toHaveLength(1);
+  expect(partial.resultSummary?.failedCount).toBe(3);
+  expect(partial.runErrors?.map((item) => item.category).sort()).toEqual([
     "collection",
     "invalid_response",
     "rate_limit",
   ]);
-  expect(failed.runErrors?.every((item) => item.retryable)).toBeTruthy();
+  expect(partial.runErrors?.every((item) => item.retryable)).toBeTruthy();
 
   expect((await request.post(`/api/detections/${id}/retry`)).status()).toBe(202);
   const completed = await waitForStatus(request, id, "completed");

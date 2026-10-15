@@ -13,8 +13,8 @@ export function Badge({ children, tone = "default" }: { children: ReactNode; ton
   return <span className={`badge ${tone === "default" ? "" : `badge-${tone}`}`}>{children}</span>;
 }
 
-export function Card({ title, description, action, children, className = "" }: { title?: ReactNode; description?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
-  return <section className={`card ${className}`}>
+export function Card({ id, title, description, action, children, className = "" }: { id?: string; title?: ReactNode; description?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
+  return <section id={id} className={`card ${className}`}>
     {(title || description || action) && <header className="card-header"><div>{title && <h2 className="card-title">{title}</h2>}{description && <p className="card-description">{description}</p>}</div>{action}</header>}
     <div className="card-body">{children}</div>
   </section>;

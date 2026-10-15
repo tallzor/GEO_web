@@ -23,10 +23,10 @@ import {
 
 export type DetectionTaskBrand = Pick<
   Brand,
-  "id" | "name" | "shortName" | "characteristics" | "categoryName" | "trustProof" | "positioningStatement" | "industry" | "intro" | "serviceArea" | "targetAudience" | "products" | "competitors"
+  "id" | "name" | "shortName" | "characteristics" | "categoryName" | "trustProof" | "positioningStatement" | "industry" | "website" | "intro" | "serviceArea" | "targetAudience" | "products" | "competitors"
 >;
 
-export type DetectionTaskQuestion = Pick<DetectionQuestion, "id" | "text">;
+export type DetectionTaskQuestion = Pick<DetectionQuestion, "id" | "text" | "persona" | "decisionScenario">;
 
 export type ServerDetectionTask = Detection & {
   organizationId?: string;
@@ -46,7 +46,7 @@ export type DetectionTaskStatus = Pick<
 
 export type DetectionTaskUpdateGuard = Partial<Pick<
   ServerDetectionTask,
-  "status" | "stage" | "workerId"
+  "status" | "stage" | "workerId" | "attempt"
 >>;
 
 type DetectionStoreFile = {
@@ -294,8 +294,8 @@ export function makeServerDetectionTask(input: {
     analysisCompleted: 0,
     progressMessage: "等待检测 Worker 接管任务",
     collectionModelVersions: {},
-    analysisPromptVersion: "detection-analysis-v4-question-batch",
-    analysisRuleVersion: "geo-four-dimensions-v3",
+    analysisPromptVersion: "detection-analysis-v5-geo-result",
+    analysisRuleVersion: "v0.3.0-geo-results-v1",
     createdAt: now,
     updatedAt: now,
     sourceDetectionId: input.sourceDetectionId,

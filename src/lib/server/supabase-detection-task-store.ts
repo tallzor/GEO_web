@@ -6,6 +6,7 @@ import type {
   DetectionResult,
   DetectionRunError,
   Diagnosis,
+  GeoDetectionSummary,
   OptimizationSuggestion,
   ReputationTopic,
   RankedBrandMention,
@@ -251,6 +252,9 @@ export async function listSupabaseDetectionTasks(brandId?: string, organizationI
       collectionModelVersions: record(row.collection_model_versions) as Record<string, string>,
       analysisPromptVersion: optionalText(row.analysis_prompt_version),
       analysisRuleVersion: optionalText(row.analysis_rule_version),
+      resultSummary: row.result_summary
+        ? record(row.result_summary) as unknown as GeoDetectionSummary
+        : undefined,
       results: taskResults,
       diagnosis,
       runErrors: errorRows.filter((item) => text(item.detection_id) === detectionId).map(mapRunError),
@@ -293,6 +297,7 @@ export async function saveSupabaseDetectionTask(
       collection_model_versions: task.collectionModelVersions || {},
       analysis_prompt_version: task.analysisPromptVersion || null,
       analysis_rule_version: task.analysisRuleVersion || null,
+      result_summary: task.resultSummary || null,
       source_detection_id: task.sourceDetectionId || null,
       data_source: task.dataSource || "live_api",
       collection_method: task.collectionMethod || "model_api",
@@ -354,6 +359,10 @@ export async function saveSupabaseDetectionTask(
         detection_id: task.id,
         result_id: result.id,
         brand_mentioned: result.brandMentioned,
+        target_mentioned: result.targetMentioned ?? result.brandMentioned,
+        direct_question: result.directQuestion ?? false,
+        presentation_role: result.presentationRole || (result.brandMentioned ? "general_mention" : "not_mentioned"),
+        risk_signal: result.riskSignal || null,
         mention_count: result.mentionCount || 0,
         first_mention_index: result.firstMentionIndex ?? null,
         recommended: result.recommended,
@@ -367,6 +376,8 @@ export async function saveSupabaseDetectionTask(
         accuracy_score: result.accuracyScore ?? null,
         conclusion: result.analysisConclusion || null,
         evidences: {
+          presentation: result.presentationEvidence || result.recommendationEvidence || "",
+          risk: result.riskEvidence || "",
           recommendation: result.recommendationEvidence || "",
           sentiment: result.sentimentEvidence || "",
           positiveEvaluationCount: result.positiveEvaluationCount || 0,
@@ -377,7 +388,7 @@ export async function saveSupabaseDetectionTask(
         ranked_brands: result.rankedBrands || [],
         reputation_topics: result.reputationTopics || [],
         analysis_model: result.analysisModel || task.analysisModel || "unknown",
-        prompt_version: task.analysisPromptVersion || "detection-analysis-v4-question-batch",
+        prompt_version: task.analysisPromptVersion || "detection-analysis-v5-geo-result",
       })), { onConflict: "detection_id,result_id" });
       if (analysisResult.error) throw new Error(`检测分析保存失败：${analysisResult.error.message}`);
     }
@@ -469,6 +480,7 @@ async function guardedParentUpdate(
   if (guard.status) query = query.eq("status", guard.status);
   if (guard.stage) query = query.eq("stage", guard.stage);
   if (guard.workerId) query = query.eq("worker_id", guard.workerId);
+  if (guard.attempt !== undefined) query = query.eq("attempt", guard.attempt);
   return query.select("id").maybeSingle();
 }
 
@@ -479,7 +491,7 @@ function mapResult(row: Row, analysis?: Row): DetectionResult {
   const recommendationType = analysis ? text(analysis.recommendation_type) as DetectionResult["recommendationType"] : "not_mentioned";
   const rankPosition = optionalNumber(analysis?.rank);
   const answer = text(row.answer);
-  const brandMentioned = analysis?.brand_mentioned === true;
+  const brandMentioned = analysis?.target_mentioned === true || analysis?.brand_mentioned === true;
   return {
     id: text(row.id),
     provider: text(row.provider) as DetectionResult["provider"],
@@ -487,6 +499,12 @@ function mapResult(row: Row, analysis?: Row): DetectionResult {
     questionSnapshot: text(row.question_snapshot),
     answer,
     brandMentioned,
+    targetMentioned: brandMentioned,
+    directQuestion: analysis?.direct_question === true,
+    presentationRole: optionalText(analysis?.presentation_role) as DetectionResult["presentationRole"],
+    presentationEvidence: optionalText(evidences.presentation),
+    riskSignal: optionalText(analysis?.risk_signal) as DetectionResult["riskSignal"],
+    riskEvidence: optionalText(evidences.risk),
     mentionCount: numberValue(analysis?.mention_count),
     firstMentionIndex: optionalNumber(analysis?.first_mention_index),
     recommended: analysis?.recommended === true,
@@ -549,6 +567,7 @@ function mapBrandSnapshot(value: unknown): DetectionTaskBrand {
   return {
     ...snapshot,
     shortName: text(snapshot.shortName),
+    website: text(snapshot.website),
   };
 }
 

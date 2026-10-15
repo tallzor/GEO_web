@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { Info } from "lucide-react";
 import {
   ensureServerDetectionTask,
   readDetectionResponse,
@@ -13,6 +14,7 @@ const maxRetryIntervalMs = 15_000;
 
 export function LiveDetectionRunner({ detectionId }: { detectionId: string }) {
   const syncServerDetection = useAppStore((state) => state.syncServerDetection);
+  const [reconnecting, setReconnecting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,6 +38,7 @@ export function LiveDetectionRunner({ detectionId }: { detectionId: string }) {
         const status = await readDetectionStatusResponse(response);
         if (cancelled) return;
         consecutiveFailures = 0;
+        setReconnecting(false);
         if (status.status === "pending" || status.status === "running") {
           const current = useAppStore.getState().detections.find((item) => item.id === detectionId);
           if (current) syncServerDetection({ ...current, ...status });
@@ -50,6 +53,7 @@ export function LiveDetectionRunner({ detectionId }: { detectionId: string }) {
         if (!cancelled) syncServerDetection(detection);
       } catch {
         consecutiveFailures += 1;
+        if (!cancelled && consecutiveFailures >= 2) setReconnecting(true);
         schedule(Math.min(maxRetryIntervalMs, pollIntervalMs * 2 ** consecutiveFailures));
       }
     };
@@ -61,5 +65,8 @@ export function LiveDetectionRunner({ detectionId }: { detectionId: string }) {
     };
   }, [detectionId, syncServerDetection]);
 
-  return null;
+  if (!reconnecting) return null;
+  return <div className="notice notice-warning" style={{ marginBottom: 16 }} role="status" aria-live="polite">
+    <Info size={17} />连接暂时中断，检测任务仍在后台执行，正在重新连接。
+  </div>;
 }

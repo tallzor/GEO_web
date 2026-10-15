@@ -211,6 +211,21 @@ test("verifyExpectations 非 42703 错误标记为 unknown", async () => {
   assert.equal(missing[0].message, "permission denied");
 });
 
+test("verifyExpectations 网络错误不会误报为表不存在", async () => {
+  const tables = ["detections"];
+  const columns = [{ migration: "a.sql", table: "detections", column: "result_summary" }];
+  const client = makeMockClient(() => ({
+    data: null,
+    error: { message: "TypeError: fetch failed" },
+  }));
+  const { missing, existingTables } = await verifyExpectations(tables, columns, client);
+  assert.equal(existingTables.size, 0);
+  assert.equal(missing.length, 2);
+  assert.equal(missing[0].unknown, true);
+  assert.equal(missing[1].unknown, true);
+  assert.equal(missing[1].skipped, true);
+});
+
 test("verifyExpectations 空输入 → 空 missing", async () => {
   const client = makeMockClient(() => ({ data: [], error: null }));
   const { missing, existingTables } = await verifyExpectations([], [], client);

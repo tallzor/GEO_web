@@ -9,6 +9,7 @@
 3. `202608010003_storage.sql`：私有知识附件 bucket 和路径隔离策略。
 4. `202608010004_detection_progress_constraint.sql`：统一检测成功、部分失败时的进度约束。
 5. 后续迁移继续按文件名顺序执行；`202609140001_cognition_setup.sql` 增加 v0.3.0 品牌/产品字段、静态附件归属和认知洞察版本。
+6. `202609230001_geo_result_analysis.sql` 增加 GEO 逐条分析字段、批次结果汇总和已完成检测查询索引。
 
 迁移文件必须按文件名顺序执行。可在 Supabase Dashboard 的 SQL Editor 中逐个执行；接入 Supabase CLI 后也可以使用官方 migration 命令执行。
 
@@ -36,11 +37,12 @@ GEO_AUTH_MODE=demo
 npm.cmd run supabase:verify
 npm.cmd run supabase:verify-isolation
 npm.cmd run worker:cognition
+npm.cmd run worker:detection
 ```
 
 第一条检查表和私有 Storage；第二条需要两个不同组织的测试账号，具体变量和完整顺序见 `documents/Supabase上线与验证操作说明.md`。
 
-正式数据模式下，认知分析通过后台 Worker 异步执行。应用服务启动后另行运行 `worker:cognition`；它与检测 Worker 共用 `GEO_WORKER_TOKEN`，也可在未配置时复用 `PUBLISH_WORKER_TOKEN`。只有明确设置 `GEO_COGNITION_WEB_SEARCH=true` 时，认知模型才会联网并保存可验证的参考链接。
+正式数据模式下，认知分析和GEO检测都通过后台 Worker 异步执行。应用服务启动后另行运行 `worker:cognition` 与 `worker:detection`；两者共用 `GEO_WORKER_TOKEN`，也可在未配置时复用 `PUBLISH_WORKER_TOKEN`。只有明确设置 `GEO_COGNITION_WEB_SEARCH=true` 时，认知模型才会联网并保存可验证的参考链接。
 
 ## 数据隔离检查
 

@@ -34,6 +34,7 @@ const requestSchema = z.object({
     trustProof: optionalLegacyText(500),
     positioningStatement: optionalLegacyText(300),
     industry: optionalLegacyText(100),
+    website: optionalLegacyText(500),
     intro: optionalLegacyText(3_000),
     serviceArea: optionalLegacyText(500),
     targetAudience: optionalLegacyText(1_000),
@@ -63,6 +64,8 @@ const requestSchema = z.object({
   questions: z.array(z.object({
     id: z.string().trim().min(1).max(120),
     text: z.string().trim().min(2, "检测问题不能为空").max(500),
+    persona: optionalLegacyText(500),
+    decisionScenario: optionalLegacyText(500),
   })).min(1, "请至少选择1个检测问题").max(10, "最多选择10个检测问题")
     .refine((items) => new Set(items.map((item) => item.id)).size === items.length, "检测问题不能重复")
     .refine((items) => new Set(items.map((item) => item.text)).size === items.length, "存在重复的检测问题"),

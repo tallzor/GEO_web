@@ -21,7 +21,12 @@ export async function ensureServerDetectionTask(detectionId: string) {
   const questions = detection.questionIds.flatMap((questionId) => {
     const question = brand.questions.find((item) => item.id === questionId);
     return question && question.enabled && question.subjectType === subjectType && question.subjectId === subjectId
-      ? [{ id: question.id, text: question.text }]
+      ? [{
+          id: question.id,
+          text: question.text,
+          persona: question.persona,
+          decisionScenario: question.decisionScenario,
+        }]
       : [];
   });
   if (questions.length !== detection.questionIds.length) throw new Error("部分检测问题已停用、不存在或不属于当前检测对象");
@@ -39,16 +44,17 @@ export async function ensureServerDetectionTask(detectionId: string) {
       subjectName: detection.subjectName || (subjectType === "product" ? product?.name : brand.name),
       brand: {
         id: brand.id,
-        name: subjectType === "product" ? product?.name || "" : brand.name,
-        shortName: subjectType === "product" ? "" : brand.shortName ?? "",
-        characteristics: subjectType === "product" ? product?.features || "" : brand.characteristics ?? "",
-        categoryName: subjectType === "product" ? product?.type || brand.categoryName : brand.categoryName ?? "",
-        trustProof: subjectType === "product" ? product?.evidence || "" : brand.trustProof ?? "",
-        positioningStatement: subjectType === "product" ? product?.advantages || "" : brand.positioningStatement ?? "",
+        name: brand.name,
+        shortName: brand.shortName ?? "",
+        characteristics: brand.characteristics ?? "",
+        categoryName: brand.categoryName ?? "",
+        trustProof: brand.trustProof ?? "",
+        positioningStatement: brand.positioningStatement ?? "",
         industry: brand.industry ?? "",
-        intro: subjectType === "product" ? product?.description || "" : brand.intro ?? "",
+        website: brand.website ?? "",
+        intro: brand.intro ?? "",
         serviceArea: brand.serviceArea ?? "",
-        targetAudience: subjectType === "product" ? product?.audience || brand.targetAudience : brand.targetAudience ?? "",
+        targetAudience: brand.targetAudience ?? "",
         products: (subjectType === "product" && product ? [product] : []).map((item) => ({
           id: item.id,
           name: item.name,

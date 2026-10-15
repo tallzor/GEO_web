@@ -319,7 +319,10 @@ PUBLISHING_CREDENTIALS_KEY=用openssl生成的随机串
 # Worker 调用内部 API 的令牌，也用 openssl rand -base64 32 生成
 PUBLISH_WORKER_TOKEN=用openssl生成的随机串
 GEO_WORKER_TOKEN=同上，可以和PUBLISH_WORKER_TOKEN用同一个值
+# 单次并发采集的平台与问题组合数
 GEO_COLLECTION_CONCURRENCY=3
+# 单次并发分析的问题数
+GEO_ANALYSIS_CONCURRENCY=2
 
 # ========== 地址配置 ==========
 # Worker 从服务器本机调用，用 127.0.0.1 最快最安全

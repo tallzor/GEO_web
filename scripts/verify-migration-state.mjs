@@ -81,14 +81,28 @@ export async function verifyExpectations(tables, columns, client) {
     if (!error) {
       existingTables.add(table);
     } else {
-      missing.push({ type: "table", table, message: error.message });
+      missing.push({
+        type: "table",
+        table,
+        message: error.message,
+        unknown: !["PGRST204", "PGRST205", "42P01"].includes(error.code),
+      });
     }
   }
 
   // 2. 检查列（只在表存在时查；表缺失则标记跳过）
   for (const { migration, table, column } of columns) {
     if (!existingTables.has(table)) {
-      missing.push({ type: "column", table, column, migration, skipped: true });
+      const tableFailure = missing.find((item) => item.type === "table" && item.table === table);
+      missing.push({
+        type: "column",
+        table,
+        column,
+        migration,
+        skipped: true,
+        unknown: tableFailure?.unknown === true,
+        message: tableFailure?.message,
+      });
       continue;
     }
     const { error } = await client.from(table).select(column).limit(0);
@@ -158,7 +172,7 @@ async function main() {
       console.log(`  [${step}/${totalChecks}] ✓ 表 ${table}`);
     } else {
       const m = missing.find((x) => x.type === "table" && x.table === table);
-      console.log(`  [${step}/${totalChecks}] ✗ 表 ${table} — ${m?.message || "不存在"}`);
+      console.log(`  [${step}/${totalChecks}] ${m?.unknown ? "?" : "✗"} 表 ${table} — ${m?.message || "不存在"}`);
     }
   }
 
@@ -166,7 +180,8 @@ async function main() {
   for (const { migration, table, column } of columns) {
     step += 1;
     if (!existingTables.has(table)) {
-      console.log(`  [${step}/${totalChecks}] ⊘ ${table}.${column} — 跳过（表不存在）`);
+      const m = missing.find((x) => x.type === "column" && x.table === table && x.column === column);
+      console.log(`  [${step}/${totalChecks}] ⊘ ${table}.${column} — ${m?.unknown ? "跳过（无法确认表状态）" : "跳过（表不存在）"}`);
       continue;
     }
     const m = missing.find((x) => x.type === "column" && x.table === table && x.column === column);
@@ -185,6 +200,14 @@ async function main() {
     console.log(`✅ 全部通过（${totalChecks}/${totalChecks}）`);
     console.log("migration 状态一致，无需执行新 migration。");
     process.exit(0);
+  }
+
+  const unknown = missing.filter((item) => item.unknown);
+  if (unknown.length) {
+    const messages = [...new Set(unknown.map((item) => item.message).filter(Boolean))];
+    console.log(`⚠️ 无法完成线上 migration 校验：${messages.join("；") || "Supabase返回未知错误"}`);
+    console.log("这不表示表或字段缺失；请检查网络、Supabase项目状态和服务端密钥后重试。");
+    process.exit(2);
   }
 
   console.log(`❌ 发现 ${missing.length} 项缺失：`);

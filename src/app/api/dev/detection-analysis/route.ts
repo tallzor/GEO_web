@@ -10,6 +10,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const requestSchema = z.object({
+  subject: z.object({
+    type: z.enum(["brand", "product"]),
+    name: z.string().trim().min(1).max(100),
+    aliases: z.array(z.string().trim().min(1).max(100)).max(20).optional().default([]),
+  }).optional(),
   brand: z.object({
     name: z.string().trim().min(1).max(100),
     shortName: z.string().max(100).optional().default(""),
@@ -18,6 +23,7 @@ const requestSchema = z.object({
     trustProof: z.string().max(500).optional().default(""),
     positioningStatement: z.string().max(300).optional().default(""),
     industry: z.string().max(100),
+    website: z.string().max(500).optional().default(""),
     intro: z.string().max(3_000),
     serviceArea: z.string().max(500),
     targetAudience: z.string().max(1_000),
@@ -43,7 +49,14 @@ const requestSchema = z.object({
       url: z.string().url().max(2_000),
     })).max(50),
   })).min(1).max(30),
-});
+}).transform((value) => ({
+  ...value,
+  subject: value.subject || {
+    type: "brand" as const,
+    name: value.brand.name,
+    aliases: [value.brand.shortName].filter(Boolean),
+  },
+}));
 
 export async function POST(request: Request) {
   if (!isAiApiEnabled()) {

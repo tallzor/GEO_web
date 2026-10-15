@@ -145,6 +145,7 @@ export function createDetectionSlice(
           results: [],
           runErrors: [],
           diagnosis: undefined,
+          resultSummary: undefined,
           analysisModel: undefined,
           completedAt: undefined,
           attempt: (item.attempt || 1) + 1,

@@ -247,16 +247,19 @@ test("核心流程：档案、AI平台真实回答、内容和发布记录", asy
   await expect(page.getByRole("button", { name: /混元（腾讯元宝）/ })).toBeEnabled();
   await page.getByRole("button", { name: /DeepSeek/ }).click();
   await page.getByRole("button", { name: /豆包/ }).click();
+  await expect(page.getByPlaceholder("搜索问题、用户角色或决策场景")).toBeVisible();
+  await expect(page.getByRole("button", { name: "选择前10条" })).toBeVisible();
   await page.getByRole("checkbox").first().check();
+  await expect(page.getByText(/本次将采集 1 个回答组合/)).toBeVisible();
   await page.getByRole("button", { name: /开始检测/ }).click();
   await expect(page).toHaveURL(/geo\/(progress|results)/);
   await driveDetectionWorker(page);
   await expect(page).toHaveURL(/geo\/results/, { timeout: 15_000 });
-  await expect(page.getByRole("heading", { name: "检测结果明细" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "GEO检测结果" })).toBeVisible();
   await expect(page.getByText(/可以优先了解跃动健身/).first()).toBeVisible();
   await expect(page.getByLabel("AI平台")).toContainText("DeepSeek");
-  await expect(page.getByText("问题与原始回答（1）")).toBeVisible();
-  await expect(page.getByText("品牌出现次数")).toBeVisible();
+  await expect(page.getByText("问题与回答明细（1）")).toBeVisible();
+  await expect(page.getByText("出现回答")).toBeVisible();
   expect(detectionCreateRequests).toBe(1);
   await expect(page.getByText(/两次原始回答|2次回答/)).toHaveCount(0);
 
@@ -265,7 +268,7 @@ test("核心流程：档案、AI平台真实回答、内容和发布记录", asy
   await page.goto("/login");
   await page.getByRole("button", { name: /进入工作台/ }).click();
   await page.goto(persistedResultPath);
-  await expect(page.getByRole("heading", { name: "检测结果明细" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "GEO检测结果" })).toBeVisible();
   await expect(page.getByText(/可以优先了解跃动健身/).first()).toBeVisible();
 
   await page.goto("/tasks");
@@ -521,8 +524,8 @@ test("检测与分析：模块拆分、单批次切换和无历史对比入口",
   await expect(page.getByRole("heading", { name: "累计检测次数" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "近30天检测频率" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "检测平台分布" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "最近一次各平台品牌提及占比" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "最近一次检测分析摘要" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "最近一次各平台出现情况" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "最近一次GEO检测摘要" })).toBeVisible();
   await expect(page.getByRole("link", { name: /历史对比/ })).toHaveCount(0);
 
   await page.goto("/geo/records");

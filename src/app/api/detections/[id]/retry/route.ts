@@ -27,9 +27,10 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       status: "pending",
       stage: hasMissingCollection ? "collecting" : hasMissingAnalysis ? "analyzing" : "aggregating",
       completedAt: undefined,
+      resultSummary: undefined,
       runErrors: [],
       failedRuns: 0,
-      progressMessage: hasMissingCollection ? "正在重试失败的采集项" : hasMissingAnalysis ? "正在重试失败的分析项" : "正在重新汇总结论",
+      progressMessage: hasMissingCollection ? "正在重试失败的采集项" : hasMissingAnalysis ? "正在重试失败的分析项" : "正在重新汇总检测结果",
       attempt: (current.attempt || 1) + 1,
     }), account?.organizationId);
     if (!task) return NextResponse.json({ error: "检测任务不存在" }, { status: 404 });

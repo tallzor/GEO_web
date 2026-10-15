@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
 import {
   calculateSentiment,
+  classifyCitationSource,
   dedupeNames,
   findExactNameMentions,
+  normalizeCitationUrl,
   recommendationWeight,
 } from "../src/lib/server/detection-analysis-rules";
 
@@ -42,5 +44,16 @@ test.describe("检测分析规则", () => {
       "Alpha",
       "Beta",
     ]);
+  });
+
+  test("引用URL规范化并按明确规则分类", () => {
+    expect(normalizeCitationUrl("https://WWW.Example.com/report/#part")).toBe("https://example.com/report");
+    expect(classifyCitationSource({
+      title: "产品资料",
+      url: "https://brand.example.com/news/1",
+      officialWebsite: "https://brand.example.com",
+    })).toBe("brand_official");
+    expect(classifyCitationSource({ title: "国家标准全文", url: "https://std.samr.gov.cn/gb/1" })).toBe("standards_organization");
+    expect(classifyCitationSource({ title: "研究报告", url: "not a url" })).toBe("unknown");
   });
 });

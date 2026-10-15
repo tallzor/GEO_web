@@ -2,11 +2,14 @@ import "server-only";
 
 import { z } from "zod";
 import type {
+  Citation,
   Diagnosis,
   DiagnosisScores,
+  PresentationRole,
   ProviderErrorCategory,
   ProviderId,
   RecommendationType,
+  RiskSignal,
   SentimentLabel,
 } from "@/lib/types";
 import {
@@ -17,8 +20,10 @@ import { createLogger } from "@/lib/server/logger";
 import { createId } from "@/lib/utils";
 import {
   calculateSentiment,
+  classifyCitationSource,
   dedupeNames,
   findExactNameMentions,
+  normalizeCitationUrl,
   normalizeName,
   recommendationWeight,
 } from "@/lib/server/detection-analysis-rules";
@@ -28,35 +33,25 @@ const logger = createLogger("detection-analysis");
 const semanticResultSchema = z.object({
   resultId: z.string().min(1),
   conclusion: z.string().trim().min(1).max(500),
-  recommendationType: z.enum([
-    "top_pick",
-    "recommended",
-    "conditional",
-    "mentioned_only",
-    "discouraged",
+  presentationRole: z.enum([
+    "top_recommendation",
+    "alternative",
+    "general_mention",
+    "risk_warning",
+    "negative_counterexample",
     "not_mentioned",
   ]),
-  rankPosition: z.number().int().positive().nullable().optional(),
-  recommendationEvidence: z.string().trim().max(300).optional().default(""),
-  sentiment: z.enum(["积极", "中性", "需改善"]).nullable().optional().default(null),
-  sentimentEvidence: z.string().trim().max(300).optional().default(""),
-  positiveEvaluations: z.array(z.string().trim().min(1).max(300)).max(30).optional().default([]),
-  negativeEvaluations: z.array(z.string().trim().min(1).max(300)).max(30).optional().default([]),
-  factClaims: z.array(z.string().trim().min(1).max(300)).max(30).optional().default([]),
-  rankedBrands: z.array(z.object({
-    name: z.string().trim().min(1).max(80),
-    rank: z.number().int().positive().max(50).nullable().optional(),
-    evidence: z.string().trim().max(300).optional().default(""),
-  })).max(80).optional().default([]),
+  presentationEvidence: z.string().trim().max(300).optional().default(""),
+  riskSignal: z.enum([
+    "none_detected",
+    "cautious_description",
+    "negative_counterexample",
+  ]).nullable().optional().default(null),
+  riskEvidence: z.string().trim().max(300).optional().default(""),
   competitorBrands: z.array(z.object({
     name: z.string().trim().min(1).max(80),
     evidence: z.string().trim().min(1).max(300),
   })).max(50).optional().default([]),
-  reputationTopics: z.array(z.object({
-    label: z.string().trim().min(1).max(40),
-    sentiment: z.enum(["积极", "中性", "需改善"]),
-    evidence: z.string().trim().max(300).optional().default(""),
-  })).max(30).optional().default([]),
 });
 
 const semanticPayloadSchema = z.object({
@@ -74,11 +69,16 @@ const optimizationGoalPayloadSchema = z.object({
 });
 
 const optimizationGoalPromptVersion = "optimization-goal-v3-positioning-light";
-const detectionAnalysisPromptVersion = "detection-analysis-v4-question-batch";
+const detectionAnalysisPromptVersion = "detection-analysis-v5-geo-result";
 // 已停用：旧规则版本常量没有进入持久化或分析输出，避免形成无效版本标识。
 // export const detectionAnalysisRuleVersion = "geo-four-dimensions-v3";
 
 export type DetectionAnalysisInput = {
+  subject: {
+    type: "brand" | "product";
+    name: string;
+    aliases: string[];
+  };
   brand: {
     name: string;
     shortName: string;
@@ -87,6 +87,7 @@ export type DetectionAnalysisInput = {
     trustProof: string;
     positioningStatement: string;
     industry: string;
+    website: string;
     intro: string;
     serviceArea: string;
     targetAudience: string;
@@ -99,13 +100,19 @@ export type DetectionAnalysisInput = {
     questionId: string;
     question: string;
     answer: string;
-    citations: { title: string; url: string }[];
+    citations: Array<Partial<Citation> & Pick<Citation, "title" | "url">>;
   }[];
 };
 
 export type ResultAnalysis = {
   resultId: string;
   brandMentioned: boolean;
+  targetMentioned: boolean;
+  directQuestion: boolean;
+  presentationRole: PresentationRole;
+  presentationEvidence: string;
+  riskSignal?: RiskSignal;
+  riskEvidence: string;
   mentionCount: number;
   firstMentionIndex?: number;
   competitorMentions: string[];
@@ -136,6 +143,7 @@ export type ResultAnalysis = {
     sentimentLabel: SentimentLabel;
     evidence: string;
   }[];
+  citations: Citation[];
   analysisModel: string;
 };
 
@@ -219,6 +227,7 @@ export async function analyzeDetectionBatch(input: DetectionAnalysisInput) {
   }
   return {
     analyses: input.responses.map((response) => mergeRuleAndSemanticAnalysis(
+      input.subject,
       input.brand,
       response,
       byId.get(response.resultId)!,
@@ -268,44 +277,46 @@ async function requestSemanticAnalysis(
 
 function buildAnalysisPrompt(input: DetectionAnalysisInput) {
   return [
-    "你是GEO检测结果分析器。请只依据给出的品牌档案和AI原始回答进行判断，不得补充外部知识，不得猜测。",
+    "你是GEO检测结果分析器。请只依据给出的检测对象、品牌背景和AI原始回答进行判断，不得补充外部知识，不得猜测。",
     "规则：",
     "1. 只输出合法JSON，不要输出Markdown或解释。",
     "2. evidence字段必须逐字摘自对应原始回答；没有明确原文证据时返回空字符串。",
-    "3. 仅以品牌全称和档案中的品牌简称识别本品牌；不得把别名、错别字或相似名称当作本品牌。",
-    "4. 品牌未出现时recommendationType必须为not_mentioned；仅出现品牌名称但没有推荐语义时为mentioned_only。",
-    "5. recommendationType只能为top_pick、recommended、conditional、mentioned_only、discouraged、not_mentioned。",
-    "6. conclusion用一句简短中文概括该回答对品牌的呈现情况。",
-    "7. positiveEvaluations与negativeEvaluations逐条输出对本品牌的积极或需改善评价原句；同一句不要重复。没有本品牌或无法判断评价倾向时都返回空数组。",
-    "8. sentiment只能为积极、中性、需改善或null；没有本品牌、没有评价语句或无法判断时必须为null。最终情感分值由系统按正负评价数量计算，不要输出分值。",
-    "9. factClaims最多30条，只提取回答中关于本品牌的事实陈述原句，不得改写。",
-    "10. rankedBrands按回答中的推荐或列举顺序输出品牌名称与名次；整理去重后最多保留50个，名称和evidence必须真实出现在回答中，无法判断顺序时rank为null。",
-    "11. competitorBrands输出回答中真实出现、且与本品牌存在同类选择或比较关系的其他品牌；不限于档案已配置竞品。名称与evidence必须逐字出现在回答中，不得把品类、地点或泛称当品牌。",
-    "12. reputationTopics只提炼回答中对本品牌的明确评价主题，情感只能为积极、中性、需改善，必须提供原文evidence；没有明确评价时返回空数组。",
+    "3. 仅以subject.name和subject.aliases识别检测对象；不得把母品牌、其他产品、错别字或相似名称当成检测对象。",
+    "4. 检测对象未出现时presentationRole必须为not_mentioned，riskSignal必须为null。",
+    "5. presentationRole只能为top_recommendation、alternative、general_mention、risk_warning、negative_counterexample、not_mentioned。",
+    "6. top_recommendation表示首位或唯一优先推荐；alternative表示备选或并列推荐；general_mention表示仅提及；risk_warning表示主要作为风险提醒；negative_counterexample表示作为不推荐或负面反例。",
+    "7. riskSignal只能为none_detected、cautious_description、negative_counterexample或null。限制条件、中性警示或谨慎措辞属于cautious_description；明确负面评价、不推荐或反例属于negative_counterexample。",
+    "8. 呈现位置和风险信号相互独立，分别提供presentationEvidence和riskEvidence。none_detected不需要riskEvidence。",
+    "9. conclusion用一句简短中文概括该回答如何呈现检测对象，不得推断回答之外的结论。",
+    "10. competitorBrands只输出回答中真实出现、且与检测对象存在同类选择或比较关系的其他品牌；名称和evidence必须逐字出现在回答中。",
     "输出结构：",
-    '{"results":[{"resultId":"...","conclusion":"...","recommendationType":"mentioned_only","rankPosition":null,"recommendationEvidence":"","sentiment":null,"sentimentEvidence":"","positiveEvaluations":[],"negativeEvaluations":[],"factClaims":[],"rankedBrands":[],"competitorBrands":[],"reputationTopics":[]}]}',
-    "品牌档案与回答数据：",
+    '{"results":[{"resultId":"...","conclusion":"...","presentationRole":"general_mention","presentationEvidence":"原文","riskSignal":"none_detected","riskEvidence":"","competitorBrands":[]}]}',
+    "检测对象、品牌背景与回答数据：",
     JSON.stringify(input),
   ].join("\n");
 }
 
 function mergeRuleAndSemanticAnalysis(
+  subject: DetectionAnalysisInput["subject"],
   brand: DetectionAnalysisInput["brand"],
   response: DetectionAnalysisInput["responses"][number],
   semantic: z.infer<typeof semanticResultSchema>,
   analysisModel: string,
 ): ResultAnalysis {
-  const ownNames = dedupeNames([brand.name, brand.shortName], 2);
+  const ownNames = dedupeNames([subject.name, ...subject.aliases], 20);
   const ownMatches = findExactNameMentions(response.answer, ownNames);
   const mentionCount = ownMatches.length;
   const firstMentionIndex = ownMatches[0]?.index;
-  const brandMentioned = mentionCount > 0;
+  const targetMentioned = mentionCount > 0;
+  const directQuestion = findExactNameMentions(response.question, ownNames).length > 0;
   const configuredCompetitorNames = dedupeNames(
     brand.competitors.map((competitor) => competitor.name),
     50,
   );
   const excludedNames = new Set([
     ...ownNames,
+    brand.name,
+    brand.shortName,
     brand.industry,
     brand.categoryName,
     ...brand.products.map((product) => product.name),
@@ -325,69 +336,75 @@ function mergeRuleAndSemanticAnalysis(
     [...configuredMentions, ...discoveredMentions],
     50,
   );
-  const recommendationType = brandMentioned
-    ? semantic.recommendationType === "not_mentioned"
-      ? "mentioned_only"
-      : semantic.recommendationType
-    : "not_mentioned";
-  const recommended = recommendationWeight(recommendationType) > 0;
-  const rankPosition = recommended && semantic.rankPosition
-    ? semantic.rankPosition
-    : undefined;
-  const positiveEvaluations = brandMentioned
-    ? validatedEvidenceList(response.answer, semantic.positiveEvaluations, 30)
-    : [];
-  const negativeEvaluations = brandMentioned
-    ? validatedEvidenceList(response.answer, semantic.negativeEvaluations, 30)
-    : [];
-  const sentiment = calculateSentiment(positiveEvaluations.length, negativeEvaluations.length);
-  const semanticSentimentEvidence = validateEvidence(response.answer, semantic.sentimentEvidence);
-  const sentimentEvidence = semanticSentimentEvidence
-    || positiveEvaluations[0]
-    || negativeEvaluations[0]
-    || "";
-  const rankedBrands = dedupeRankedBrands(
-    response.answer,
-    semantic.rankedBrands,
-    configuredCompetitorNames,
-  );
-  const firstOwnMatch = ownMatches[0]?.name || brand.name;
+  const roleEvidence = validateEvidence(response.answer, semantic.presentationEvidence);
+  const requestedRole = targetMentioned && semantic.presentationRole !== "not_mentioned"
+    ? semantic.presentationRole
+    : targetMentioned ? "general_mention" : "not_mentioned";
+  const presentationRole: PresentationRole = requestedRole !== "general_mention"
+    && requestedRole !== "not_mentioned"
+    && !roleEvidence
+      ? "general_mention"
+      : requestedRole;
+  const riskEvidence = validateEvidence(response.answer, semantic.riskEvidence);
+  const requestedRisk = targetMentioned ? semantic.riskSignal || "none_detected" : undefined;
+  const riskSignal: RiskSignal | undefined = requestedRisk && requestedRisk !== "none_detected" && !riskEvidence
+    ? "none_detected"
+    : requestedRisk || undefined;
+  const recommendationType = legacyRecommendationType(presentationRole);
+  const recommended = presentationRole === "top_recommendation" || presentationRole === "alternative";
+  const rankPosition = presentationRole === "top_recommendation" ? 1 : undefined;
+  const firstOwnMatch = ownMatches[0]?.name || subject.name;
+  const citations = response.citations.map((citation) => ({
+    id: citation.id || createId("citation"),
+    title: citation.title,
+    url: citation.url,
+    type: citation.type || "网页",
+    providerType: citation.providerType,
+    excerpt: citation.excerpt || "",
+    relevance: citation.relevance || "中",
+    credibility: citation.credibility || "中",
+    normalizedUrl: normalizeCitationUrl(citation.url) || undefined,
+    sourceCategory: classifyCitationSource({
+      title: citation.title,
+      url: citation.url,
+      providerType: citation.providerType,
+      officialWebsite: brand.website,
+    }),
+  }));
 
   return {
     resultId: response.resultId,
-    brandMentioned,
+    brandMentioned: targetMentioned,
+    targetMentioned,
+    directQuestion,
+    presentationRole,
+    presentationEvidence: roleEvidence || (targetMentioned ? excerptAround(response.answer, firstOwnMatch) : ""),
+    riskSignal,
+    riskEvidence: riskSignal === "none_detected" ? "" : riskEvidence,
     mentionCount,
     firstMentionIndex,
     competitorMentions,
-    mentionEvidence: brandMentioned
+    mentionEvidence: targetMentioned
       ? excerptAround(response.answer, firstOwnMatch)
       : "",
     recommended,
     recommendationType,
-    recommendationPosition: recommendationLabel(recommendationType, rankPosition),
+    recommendationPosition: presentationLabel(presentationRole),
     rankPosition,
-    recommendationEvidence: validateEvidence(response.answer, semantic.recommendationEvidence),
-    sentimentLabel: sentiment.label,
-    sentimentScore: sentiment.score,
-    sentimentEvidence,
-    positiveEvaluationCount: sentiment.positiveEvaluationCount,
-    negativeEvaluationCount: sentiment.negativeEvaluationCount,
+    recommendationEvidence: roleEvidence,
+    sentimentLabel: undefined,
+    sentimentScore: undefined,
+    sentimentEvidence: riskEvidence,
+    positiveEvaluationCount: 0,
+    negativeEvaluationCount: 0,
     accuracy: "待确认",
     accuracyScore: undefined,
     accuracyEvidence: "",
     analysisConclusion: semantic.conclusion,
-    factClaims: brandMentioned
-      ? validatedEvidenceList(response.answer, semantic.factClaims, 30)
-      : [],
-    rankedBrands,
-    reputationTopics: (brandMentioned ? semantic.reputationTopics : [])
-      .filter((entry) => Boolean(validateEvidence(response.answer, entry.evidence)))
-      .map((entry) => ({
-        label: entry.label,
-        sentimentLabel: entry.sentiment,
-        evidence: validateEvidence(response.answer, entry.evidence),
-      }))
-      .slice(0, 30),
+    factClaims: [],
+    rankedBrands: [],
+    reputationTopics: [],
+    citations,
     analysisModel,
   };
 }
@@ -748,13 +765,21 @@ function ownBrandRank(item: ResultAnalysis, brandName: string, shortName?: strin
   return item.rankedBrands.find((entry) => brandKeys.has(normalizeName(entry.name)))?.rank;
 }
 
-function recommendationLabel(type: RecommendationType, rankPosition?: number) {
-  if (type === "top_pick") return "首选推荐";
-  if (type === "recommended") return rankPosition ? `推荐列表第${rankPosition}位` : "明确推荐";
-  if (type === "conditional") return "条件推荐";
-  if (type === "mentioned_only") return "仅提及品牌";
-  if (type === "discouraged") return "不建议";
-  return "未提及品牌";
+function legacyRecommendationType(role: PresentationRole): RecommendationType {
+  if (role === "top_recommendation") return "top_pick";
+  if (role === "alternative") return "recommended";
+  if (role === "negative_counterexample") return "discouraged";
+  if (role === "not_mentioned") return "not_mentioned";
+  return "mentioned_only";
+}
+
+function presentationLabel(role: PresentationRole) {
+  if (role === "top_recommendation") return "首位推荐";
+  if (role === "alternative") return "备选方案";
+  if (role === "general_mention") return "一般提及";
+  if (role === "risk_warning") return "风险提醒";
+  if (role === "negative_counterexample") return "负向反例";
+  return "未出现";
 }
 
 function excerptAround(text: string, value: string) {
@@ -768,36 +793,6 @@ function excerptAround(text: string, value: string) {
 function validateEvidence(answer: string, evidence: string) {
   const value = evidence.trim().replace(/^["“”']+|["“”']+$/g, "");
   return value && answer.includes(value) ? value : "";
-}
-
-function validatedEvidenceList(answer: string, items: string[], limit: number) {
-  return dedupeNames(
-    items.map((item) => validateEvidence(answer, item)).filter(Boolean),
-    limit,
-  );
-}
-
-function dedupeRankedBrands(
-  answer: string,
-  entries: z.infer<typeof semanticResultSchema>["rankedBrands"],
-  configuredCompetitorNames: string[],
-) {
-  const configuredKeys = new Set(configuredCompetitorNames.map(normalizeName));
-  const seen = new Set<string>();
-  const result: ResultAnalysis["rankedBrands"] = [];
-  for (const entry of entries) {
-    const key = normalizeName(entry.name);
-    if (!key || seen.has(key) || !findExactNameMentions(answer, [entry.name]).length) continue;
-    seen.add(key);
-    result.push({
-      name: entry.name.trim(),
-      rank: entry.rank || undefined,
-      evidence: validateEvidence(answer, entry.evidence) || excerptAround(answer, entry.name),
-      configuredCompetitor: configuredKeys.has(key),
-    });
-    if (result.length >= 50) break;
-  }
-  return result;
 }
 
 function scoreText(score: number, available: boolean) {

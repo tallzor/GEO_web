@@ -10,6 +10,7 @@ next-env.d.ts
 !.env.example
 .agents/
 documents/
+ui-mockups/
 data/detection-jobs.json
 data/detection-jobs.*.tmp
 data/brand-research-tasks.json

@@ -7,6 +7,10 @@ import type {
   ProviderCollectionRequest,
 } from "@/lib/server/providers/types";
 
+const WEB_SEARCH_UNAVAILABLE_TTL_MS = 10 * 60 * 1_000;
+const WEB_SEARCH_UNAVAILABLE_REASON = "火山方舟账号尚未开通联网搜索服务";
+let webSearchUnavailableUntil = 0;
+
 export const doubaoProvider: ProviderAdapter = {
   id: "doubao",
   collectionMethod: "model_api",
@@ -32,10 +36,18 @@ export const doubaoProvider: ProviderAdapter = {
 };
 
 export async function collectWithWebSearchFallback(request: ProviderCollectionRequest) {
+  const shouldUseWebSearch = request.enableWebSearch === true && Date.now() >= webSearchUnavailableUntil;
+  if (request.enableWebSearch === true && !shouldUseWebSearch) {
+    return {
+      result: await sampleDoubaoAnswer({ ...request, enableWebSearch: false }),
+      webSearchEnabled: false,
+      webSearchUnavailableReason: WEB_SEARCH_UNAVAILABLE_REASON,
+    };
+  }
   try {
     return {
-      result: await sampleDoubaoAnswer(request),
-      webSearchEnabled: request.enableWebSearch === true,
+      result: await sampleDoubaoAnswer({ ...request, enableWebSearch: shouldUseWebSearch }),
+      webSearchEnabled: shouldUseWebSearch,
     };
   } catch (error) {
     if (
@@ -43,10 +55,11 @@ export async function collectWithWebSearchFallback(request: ProviderCollectionRe
       && error instanceof DoubaoApiError
       && error.providerCode === "ToolNotOpen"
     ) {
+      webSearchUnavailableUntil = Date.now() + WEB_SEARCH_UNAVAILABLE_TTL_MS;
       return {
         result: await sampleDoubaoAnswer({ ...request, enableWebSearch: false }),
         webSearchEnabled: false,
-        webSearchUnavailableReason: "火山方舟账号尚未开通联网搜索服务",
+        webSearchUnavailableReason: WEB_SEARCH_UNAVAILABLE_REASON,
       };
     }
     throw error;

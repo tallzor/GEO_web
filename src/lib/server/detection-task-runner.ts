@@ -4,13 +4,13 @@ import type { DetectionResult, DetectionRunError, DetectionSample, ProviderId } 
 import { createId } from "@/lib/utils";
 import {
   analyzeDetectionBatch,
-  buildDetectionDiagnosis,
   DetectionAnalysisError,
   generateOptimizationSuggestions,
   type DetectionAnalysisInput,
   type ResultAnalysis,
 } from "@/lib/server/detection-analysis";
 import { findExactNameMentions } from "@/lib/server/detection-analysis-rules";
+import { buildGeoDetectionSummary } from "@/lib/geo-result-summary";
 import { classifyProviderError, getProviderAdapter } from "@/lib/server/providers";
 import type { ProviderCollectionResult } from "@/lib/server/providers/types";
 import { DoubaoApiError } from "@/lib/server/doubao";
@@ -29,7 +29,7 @@ import {
 const HEARTBEAT_MS = 20_000;
 const LEASE_SECONDS = 180;
 const DEFAULT_COLLECTION_CONCURRENCY = 3;
-const RETRY_DELAY_MS = 750;
+const DEFAULT_ANALYSIS_CONCURRENCY = 2;
 const DEFAULT_STAGE_TIMEOUT_MS = 240_000;
 const DEFAULT_AGGREGATION_TIMEOUT_MS = 120_000;
 const mockCollectionAttempts = new Map<string, number>();
@@ -90,141 +90,198 @@ async function withLease(
 async function processDetectionStage(id: string, workerId: string) {
   const task = await getDetectionTask(id);
   if (!task || !["pending", "running"].includes(task.status)) return;
-  if (task.stage === "queued" || task.stage === "collecting") return processCollectionBatch(task);
-  if (task.stage === "analyzing") return processAnalysisBatch(task);
-  if (task.stage === "aggregating") return aggregateDiagnosis(task, workerId);
+  if (task.stage === "queued" || task.stage === "collecting") return processCollectionBatch(task, workerId);
+  if (task.stage === "analyzing") return processAnalysisBatch(task, workerId);
+  if (task.stage === "aggregating") return aggregateGeoResult(task, workerId);
 }
 
-async function processCollectionBatch(task: ServerDetectionTask) {
+async function processCollectionBatch(task: ServerDetectionTask, workerId: string) {
   const collectionErrors = collectionRunErrors(task);
-  const batch = task.providers.flatMap((provider) => {
-    const question = task.questionSnapshots.find((item) => {
-      const key = collectionKey(provider, item.id);
-      return !task.results.some((result) => result.provider === provider && result.questionId === item.id)
+  const batch = task.questionSnapshots.flatMap((question) => task.providers
+    .filter((provider) => {
+      const key = collectionKey(provider, question.id);
+      return !task.results.some((result) => result.provider === provider && result.questionId === question.id)
         && !collectionErrors.some((error) => error.runKey === key);
-    });
-    return question ? [{ provider, question }] : [];
-  }).slice(0, collectionConcurrency());
+    })
+    .map((provider) => ({ provider, question })))
+    .slice(0, collectionConcurrency());
 
   if (!batch.length) {
-    if (collectionErrors.length) return failStage(task.id, "采集阶段存在失败项，可在检测记录中重试失败项");
+    if (collectionErrors.length && task.results.length === 0) {
+      return failStage(task, workerId, "采集阶段存在失败项，可在检测记录中重试失败项");
+    }
     await updateOrThrow(task.id, (current) => progress({
       ...current,
       stage: "analyzing",
-      progressMessage: "AI回答采集完成，正在逐题整理与分析",
-    }));
+      progressMessage: collectionErrors.length
+        ? `已采集${current.results.length}个有效回答，${collectionErrors.length}个回答采集失败，继续处理有效回答`
+        : "AI回答采集完成，正在逐条处理",
+    }), runningGuard(task, workerId, "collecting"));
     return;
   }
 
-  await Promise.all(batch.map(async ({ provider, question }) => {
+  const outcomes = await Promise.all(batch.map(async ({ provider, question }) => {
     try {
-      const collected = await retryOnce(
-        () => collectAnswer(provider, question.text, task.brandSnapshot.name),
-        (error) => classifyProviderError(provider, error).retryable,
+      const collected = await retryTransientOnce(
+        () => collectAnswer(provider, question.text, task.subjectName || task.brandSnapshot.name),
+        (error) => retryDelayForProvider(provider, error),
       );
-      const result = buildRawResult(
+      return {
+        kind: "success" as const,
         provider,
-        question.id,
-        question.text,
+        question,
         collected,
-        [task.brandSnapshot.name, task.brandSnapshot.shortName],
-        task.brandSnapshot.competitors.map((item) => item.name),
-      );
-      await updateOrThrow(task.id, (current) => progress({
-        ...current,
-        stage: "collecting",
-        results: current.results.some((item) => item.provider === provider && item.questionId === question.id)
-          ? current.results
-          : [...current.results, result],
-        runErrors: (current.runErrors || []).filter((item) => item.runKey !== collectionKey(provider, question.id)),
-        collectionModelVersions: { ...(current.collectionModelVersions || {}), [provider]: collected.model },
-        progressMessage: `正在采集AI回答（${Math.min((current.collectionCompleted || 0) + 1, current.collectionTotal || 0)}/${current.collectionTotal || 0}）`,
-      }));
+        result: buildRawResult(
+          provider,
+          question.id,
+          question.text,
+          collected,
+          detectionTargetNames(task),
+          task.brandSnapshot.competitors.map((item) => item.name),
+        ),
+      };
     } catch (error) {
       const classified = classifyProviderError(provider, error);
-      await saveRunError(task.id, {
+      return {
+        kind: "error" as const,
         provider,
-        questionId: question.id,
-        runKey: collectionKey(provider, question.id),
-        message: classified.message,
-        category: classified.category,
-        retryable: classified.retryable,
-      });
+        question,
+        error: {
+          provider,
+          questionId: question.id,
+          runKey: collectionKey(provider, question.id),
+          message: classified.message,
+          category: classified.category,
+          retryable: classified.retryable,
+        } satisfies DetectionRunError,
+      };
     }
   }));
+
+  await updateOrThrow(task.id, (current) => {
+    let results = current.results;
+    let runErrors = current.runErrors || [];
+    const collectionModelVersions = { ...(current.collectionModelVersions || {}) };
+    for (const outcome of outcomes) {
+      const key = collectionKey(outcome.provider, outcome.question.id);
+      runErrors = runErrors.filter((item) => item.runKey !== key);
+      if (outcome.kind === "success") {
+        if (!results.some((item) => item.provider === outcome.provider && item.questionId === outcome.question.id)) {
+          results = [...results, outcome.result];
+        }
+        collectionModelVersions[outcome.provider] = outcome.collected.model;
+      } else {
+        runErrors = [...runErrors, outcome.error];
+      }
+    }
+    const next = progress({ ...current, stage: "collecting", results, runErrors, collectionModelVersions });
+    return {
+      ...next,
+      progressMessage: `正在采集AI回答（${next.collectionCompleted || 0}/${next.collectionTotal || 0}）`,
+    };
+  }, runningGuard(task, workerId, "collecting"));
 }
 
-async function processAnalysisBatch(task: ServerDetectionTask) {
+async function processAnalysisBatch(task: ServerDetectionTask, workerId: string) {
   const analysisErrors = analysisRunErrors(task);
-  const question = task.questionSnapshots.find((item) => {
-    const results = task.results.filter((result) => result.questionId === item.id);
+  const questions = task.questionSnapshots.filter((question) => {
+    const results = task.results.filter((result) => result.questionId === question.id);
     return results.length > 0
       && results.some((result) => !result.analysisModel)
-      && !analysisErrors.some((error) => error.runKey === analysisKey(item.id));
-  });
+      && !analysisErrors.some((error) => error.runKey === analysisKey(question.id));
+  }).slice(0, analysisConcurrency());
 
-  if (!question) {
-    if (analysisErrors.length) return failStage(task.id, "分析阶段存在失败项，可在检测记录中重试失败项");
+  if (!questions.length) {
+    if (analysisErrors.length) {
+      return failStage(task, workerId, "分析阶段存在失败项，可在检测记录中重试失败项");
+    }
     await updateOrThrow(task.id, (current) => progress({
       ...current,
       stage: "aggregating",
-      progressMessage: "逐题分析完成，正在汇总四维结论",
-    }));
+      progressMessage: "逐条处理完成，正在汇总检测结果",
+    }), runningGuard(task, workerId, "analyzing"));
     return;
   }
 
-  try {
-    const input = taskAnalysisInput(task, task.results.filter((result) => result.questionId === question.id));
-    const output = process.env.GEO_TEST_MOCK_AI === "true"
-      ? mockBatchAnalysis(task, input.responses.map((item) => item.resultId))
-      : await retryOnce(() => analyzeDetectionBatch(input), isRetryableAnalysisError);
-    const byId = new Map(output.analyses.map((item) => [item.resultId, item]));
-    await updateOrThrow(task.id, (current) => progress({
-      ...current,
-      results: current.results.map((result) => byId.has(result.id) ? applyAnalysis(result, byId.get(result.id)!) : result),
-      analysisModel: appendModel(current.analysisModel, output.analysisModel),
-      runErrors: (current.runErrors || []).filter((item) => item.runKey !== analysisKey(question.id)),
-      progressMessage: `正在逐题分析（${Math.min((current.analysisCompleted || 0) + 1, current.analysisTotal || 0)}/${current.analysisTotal || 0}）`,
-    }));
-  } catch (error) {
-    logger.error("analysis batch failed", {
-      detectionId: task.id,
-      questionId: question.id,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    const classified = classifyAnalysisError(error);
-    await saveRunError(task.id, {
-      provider: task.providers[0] || "doubao",
-      questionId: question.id,
-      runKey: analysisKey(question.id),
-      message: classified.message,
-      category: classified.category,
-      retryable: classified.retryable,
-    });
-  }
+  const outcomes = await Promise.all(questions.map(async (question) => {
+    try {
+      const input = taskAnalysisInput(task, task.results.filter((result) => result.questionId === question.id));
+      const output = process.env.GEO_TEST_MOCK_AI === "true"
+        ? mockBatchAnalysis(task, input.responses.map((item) => item.resultId))
+        : await retryTransientOnce(() => analyzeDetectionBatch(input), retryDelayForAnalysis);
+      return { kind: "success" as const, question, output };
+    } catch (error) {
+      logger.error("analysis batch failed", {
+        detectionId: task.id,
+        questionId: question.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      const classified = classifyAnalysisError(error);
+      return {
+        kind: "error" as const,
+        question,
+        error: {
+          provider: task.providers[0] || "doubao",
+          questionId: question.id,
+          runKey: analysisKey(question.id),
+          message: classified.message,
+          category: classified.category,
+          retryable: classified.retryable,
+        } satisfies DetectionRunError,
+      };
+    }
+  }));
+
+  await updateOrThrow(task.id, (current) => {
+    let results = current.results;
+    let runErrors = current.runErrors || [];
+    let analysisModel = current.analysisModel;
+    for (const outcome of outcomes) {
+      const key = analysisKey(outcome.question.id);
+      runErrors = runErrors.filter((item) => item.runKey !== key);
+      if (outcome.kind === "success") {
+        const byId = new Map(outcome.output.analyses.map((item) => [item.resultId, item]));
+        results = results.map((result) => byId.has(result.id) ? applyAnalysis(result, byId.get(result.id)!) : result);
+        analysisModel = appendModel(analysisModel, outcome.output.analysisModel);
+      } else {
+        runErrors = [...runErrors, outcome.error];
+      }
+    }
+    const next = progress({ ...current, results, runErrors, analysisModel });
+    return {
+      ...next,
+      progressMessage: `正在逐题分析（${next.analysisCompleted || 0}/${next.analysisTotal || 0}）`,
+    };
+  }, runningGuard(task, workerId, "analyzing"));
 }
 
-async function aggregateDiagnosis(task: ServerDetectionTask, workerId: string) {
+async function aggregateGeoResult(task: ServerDetectionTask, workerId: string) {
   const testDelayMs = process.env.GEO_TEST_MOCK_AI === "true"
     ? Math.max(0, Number.parseInt(process.env.GEO_TEST_AGGREGATION_DELAY_MS || "0", 10) || 0)
     : 0;
   if (testDelayMs) await wait(testDelayMs);
   const latest = await getDetectionTask(task.id);
   if (!latest || latest.status !== "running" || latest.stage !== "aggregating" || latest.workerId !== workerId) return;
-  const input = taskAnalysisInput(latest, latest.results);
-  const analyses = latest.results.filter((item) => item.analysisModel).map(resultAnalysisFromResult);
-  if (analyses.length !== latest.results.length) {
-    return failStage(task.id, "部分回答缺少分析结果，请重试失败项");
+  const analyzedResults = latest.results.filter((item) => item.analysisModel);
+  if (analyzedResults.length !== latest.results.length) {
+    return failStage(latest, workerId, "部分回答缺少分析结果，请重试失败项");
   }
-  const diagnosis = buildDetectionDiagnosis(input, analyses, latest.analysisModel || "foundation-model");
+  const resultSummary = buildGeoDetectionSummary({
+    results: analyzedResults,
+    requestedCount: latest.collectionTotal || latest.providers.length * latest.questionSnapshots.length,
+    failedCount: collectionRunErrors(latest).length,
+    subjectName: latest.subjectName || latest.brandSnapshot.name,
+  });
   await updateOrThrow(task.id, (current) => progress({
     ...current,
-    diagnosis,
-    status: "completed",
+    resultSummary,
+    status: resultSummary.failedCount > 0 ? "partial" : "completed",
     stage: "completed",
     completedAt: new Date().toISOString(),
-    progressMessage: "检测与分析已完成，可查看四维结果",
-  }), { status: "running", stage: "aggregating", workerId });
+    progressMessage: resultSummary.failedCount > 0
+      ? `检测结果已生成，${resultSummary.failedCount}个回答采集失败`
+      : "检测结果已生成",
+  }), runningGuard(task, workerId, "aggregating"));
 }
 
 async function processSuggestion(id: string) {
@@ -234,9 +291,9 @@ async function processSuggestion(id: string) {
     const analyses = task.results.filter((item) => item.analysisModel).map(resultAnalysisFromResult);
     const suggestions = process.env.GEO_TEST_MOCK_AI === "true"
       ? mockOptimizationSuggestions(task)
-      : await retryOnce(
+      : await retryTransientOnce(
         () => generateOptimizationSuggestions(taskAnalysisInput(task, task.results), analyses, task.diagnosis!),
-        isRetryableAnalysisError,
+        retryDelayForAnalysis,
       );
     await updateOrThrow(id, (current) => ({
       ...current,
@@ -263,10 +320,14 @@ async function processSuggestion(id: string) {
   }
 }
 
-async function retryOnce<T>(operation: () => Promise<T>, retryable: (error: unknown) => boolean) {
+async function retryTransientOnce<T>(
+  operation: () => Promise<T>,
+  retryDelay: (error: unknown) => number | undefined,
+) {
   try { return await operation(); } catch (error) {
-    if (!retryable(error)) throw error;
-    await wait(RETRY_DELAY_MS);
+    const delay = retryDelay(error);
+    if (delay === undefined) throw error;
+    await wait(delay);
     return operation();
   }
 }
@@ -277,26 +338,24 @@ function collectionConcurrency() {
   return Math.min(10, Math.max(1, configured));
 }
 
+function analysisConcurrency() {
+  const configured = Number.parseInt(process.env.GEO_ANALYSIS_CONCURRENCY || "", 10);
+  if (!Number.isFinite(configured)) return DEFAULT_ANALYSIS_CONCURRENCY;
+  return Math.min(3, Math.max(1, configured));
+}
+
 function wait(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-async function saveRunError(id: string, nextError: DetectionRunError) {
-  await updateOrThrow(id, (current) => progress({
-    ...current,
-    runErrors: [...(current.runErrors || []).filter((item) => item.runKey !== nextError.runKey), nextError],
-    progressMessage: `${nextError.message}；其余项目继续处理`,
-  }));
-}
-
-async function failStage(id: string, message: string) {
-  await updateOrThrow(id, (current) => progress({
+async function failStage(task: ServerDetectionTask, workerId: string, message: string) {
+  await updateOrThrow(task.id, (current) => progress({
     ...current,
     status: "failed",
     stage: "failed",
     completedAt: new Date().toISOString(),
     progressMessage: message,
-  }));
+  }), runningGuard(task, workerId, task.stage));
 }
 
 async function markUnexpectedFailure(id: string, workerId: string, error: unknown) {
@@ -327,7 +386,7 @@ function progress(task: ServerDetectionTask): ServerDetectionTask {
     collectionCompleted,
     analysisTotal,
     analysisCompleted,
-    completedRuns: collectionCompleted + analysisCompleted + (task.diagnosis ? 1 : 0),
+    completedRuns: collectionCompleted + analysisCompleted + (task.resultSummary ? 1 : 0),
     failedRuns: (task.runErrors || []).length,
   };
 }
@@ -355,7 +414,16 @@ function stageTimeoutMs(stage: ServerDetectionTask["stage"]) {
     const configured = Number.parseInt(process.env.GEO_AGGREGATION_TIMEOUT_MS || "", 10);
     return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_AGGREGATION_TIMEOUT_MS;
   }
+  if (stage === "analyzing") return analysisStageTimeoutMs();
   return DEFAULT_STAGE_TIMEOUT_MS;
+}
+
+function analysisStageTimeoutMs() {
+  const configured = Number.parseInt(process.env.GEO_FOUNDATION_TIMEOUT_MS || "", 10);
+  const foundationTimeout = Number.isFinite(configured)
+    ? Math.min(300_000, Math.max(30_000, configured))
+    : 240_000;
+  return Math.min(330_000, foundationTimeout + 30_000);
 }
 
 function collectionRunErrors(task: ServerDetectionTask) {
@@ -369,11 +437,16 @@ function analysisKey(questionId: string) { return `analysis:${questionId}`; }
 
 function taskAnalysisInput(task: ServerDetectionTask, results: DetectionResult[]): DetectionAnalysisInput {
   return {
+    subject: {
+      type: task.subjectType || "brand",
+      name: task.subjectName || task.brandSnapshot.name,
+      aliases: task.subjectType === "product" ? [] : [task.brandSnapshot.shortName].filter(Boolean),
+    },
     brand: {
       name: task.brandSnapshot.name, shortName: task.brandSnapshot.shortName,
       characteristics: task.brandSnapshot.characteristics, categoryName: task.brandSnapshot.categoryName,
       trustProof: task.brandSnapshot.trustProof, positioningStatement: task.brandSnapshot.positioningStatement,
-      industry: task.brandSnapshot.industry, intro: task.brandSnapshot.intro,
+      industry: task.brandSnapshot.industry, website: task.brandSnapshot.website, intro: task.brandSnapshot.intro,
       serviceArea: task.brandSnapshot.serviceArea, targetAudience: task.brandSnapshot.targetAudience,
       products: task.brandSnapshot.products.map((item) => ({ name: item.name, description: item.description, price: item.price, features: item.features })),
       competitors: task.brandSnapshot.competitors.map((item) => ({ name: item.name, description: item.description })),
@@ -381,7 +454,7 @@ function taskAnalysisInput(task: ServerDetectionTask, results: DetectionResult[]
     responses: results.map((result) => ({
       resultId: result.id, provider: result.provider, questionId: result.questionId,
       question: result.questionSnapshot || "检测问题", answer: result.answer,
-      citations: result.citations.map((item) => ({ title: item.title, url: item.url })),
+      citations: result.citations,
     })),
   };
 }
@@ -411,7 +484,9 @@ function buildRawResult(provider: ProviderId, questionId: string, question: stri
   };
   return {
     id: createId("result"), provider, questionId, questionSnapshot: question, answer: collected.answer,
-    brandMentioned: ownMatches.length > 0, mentionCount: ownMatches.length, firstMentionIndex: ownMatches[0]?.index,
+    brandMentioned: ownMatches.length > 0, targetMentioned: ownMatches.length > 0,
+    directQuestion: findExactNameMentions(question, brandNames).length > 0,
+    mentionCount: ownMatches.length, firstMentionIndex: ownMatches[0]?.index,
     recommended: false, recommendationPosition: ownMatches.length ? "已提及，待分析" : "未提及品牌",
     competitorMentions: competitors, accuracy: "待确认", citations, samples: [sample],
     dataSource: process.env.GEO_TEST_MOCK_AI === "true" ? "mock" : "live_api",
@@ -427,7 +502,14 @@ function applyAnalysis(result: DetectionResult, analysis: ResultAnalysis): Detec
 
 function resultAnalysisFromResult(result: DetectionResult): ResultAnalysis {
   return {
-    resultId: result.id, brandMentioned: result.brandMentioned, mentionCount: result.mentionCount || 0,
+    resultId: result.id, brandMentioned: result.brandMentioned,
+    targetMentioned: result.targetMentioned ?? result.brandMentioned,
+    directQuestion: result.directQuestion === true,
+    presentationRole: result.presentationRole || (result.brandMentioned ? "general_mention" : "not_mentioned"),
+    presentationEvidence: result.presentationEvidence || result.recommendationEvidence || "",
+    riskSignal: result.riskSignal,
+    riskEvidence: result.riskEvidence || "",
+    mentionCount: result.mentionCount || 0,
     firstMentionIndex: result.firstMentionIndex, competitorMentions: result.competitorMentions,
     mentionEvidence: result.brandMentioned ? result.questionSnapshot || "品牌被提及" : "",
     recommended: result.recommended, recommendationType: result.recommendationType || "not_mentioned",
@@ -442,16 +524,40 @@ function resultAnalysisFromResult(result: DetectionResult): ResultAnalysis {
     reputationTopics: (result.reputationTopics || [])
       .filter((item) => Boolean(item.sentimentLabel))
       .map((item) => ({ ...item, sentimentLabel: item.sentimentLabel! })),
+    citations: result.citations,
     analysisModel: result.analysisModel || "foundation-model",
   };
+}
+
+function detectionTargetNames(task: ServerDetectionTask) {
+  return task.subjectType === "product"
+    ? [task.subjectName || ""].filter(Boolean)
+    : [task.subjectName || task.brandSnapshot.name, task.brandSnapshot.shortName].filter(Boolean);
 }
 
 function classifyAnalysisError(error: unknown) {
   if (error instanceof DetectionAnalysisError) return { message: error.message, category: error.category, retryable: error.retryable };
   return { message: "分析结果保存失败，请稍后重试", category: "analysis" as const, retryable: true };
 }
-function isRetryableAnalysisError(error: unknown) { return error instanceof DetectionAnalysisError && error.retryable; }
+function retryDelayForProvider(provider: ProviderId, error: unknown) {
+  const classified = classifyProviderError(provider, error);
+  if (!classified.retryable || classified.category === "timeout") return undefined;
+  return classified.category === "rate_limit" ? jitter(1_500, 2_500) : jitter(500, 1_000);
+}
+function retryDelayForAnalysis(error: unknown) {
+  if (!(error instanceof DetectionAnalysisError) || !error.retryable || error.category === "timeout") return undefined;
+  return error.category === "rate_limit" ? jitter(1_500, 2_500) : jitter(500, 1_000);
+}
+function jitter(min: number, max: number) { return Math.round(min + Math.random() * (max - min)); }
 function appendModel(existing: string | undefined, model: string) { return [...new Set([...(existing || "").split(", ").filter(Boolean), model])].join(", "); }
+
+function runningGuard(
+  task: ServerDetectionTask,
+  workerId: string,
+  stage: ServerDetectionTask["stage"],
+) {
+  return { status: "running" as const, stage, workerId, attempt: task.attempt || 1 };
+}
 
 async function updateOrThrow(
   id: string,
@@ -511,15 +617,19 @@ function mockOptimizationSuggestions(task: ServerDetectionTask) {
 
 function mockBatchAnalysis(task: ServerDetectionTask, resultIds: string[]) {
   const analysisModel = "test-analysis-model";
-  return { analysisModel, analyses: resultIds.map<ResultAnalysis>((resultId) => ({
-    resultId, brandMentioned: true, mentionCount: 1, competitorMentions: [], mentionEvidence: task.brandSnapshot.name,
-    recommended: true, recommendationType: "recommended", recommendationPosition: "明确推荐", rankPosition: 1,
-    recommendationEvidence: `可以优先了解${task.brandSnapshot.name}`, sentimentLabel: "积极",
-    sentimentScore: 82, sentimentEvidence: task.brandSnapshot.name, positiveEvaluationCount: 1, negativeEvaluationCount: 0,
-    accuracy: "准确", accuracyScore: 80, accuracyEvidence: task.brandSnapshot.name,
-    analysisConclusion: "回答明确提及并推荐了该品牌。", factClaims: [],
-    rankedBrands: [{ name: task.brandSnapshot.name, rank: 1, evidence: task.brandSnapshot.name, configuredCompetitor: false }],
-    reputationTopics: [{ label: "服务体验", sentimentLabel: "积极", evidence: task.brandSnapshot.name }],
-    analysisModel,
-  })) };
+  const subjectName = task.subjectName || task.brandSnapshot.name;
+  return { analysisModel, analyses: resultIds.map<ResultAnalysis>((resultId) => {
+    const source = task.results.find((result) => result.id === resultId);
+    return {
+      resultId, brandMentioned: true, targetMentioned: true, directQuestion: source?.directQuestion === true,
+      presentationRole: "alternative", presentationEvidence: `可以优先了解${subjectName}`,
+      riskSignal: "none_detected", riskEvidence: "", mentionCount: 1, competitorMentions: [], mentionEvidence: subjectName,
+      recommended: true, recommendationType: "recommended", recommendationPosition: "备选方案", rankPosition: undefined,
+      recommendationEvidence: `可以优先了解${subjectName}`, sentimentLabel: undefined,
+      sentimentScore: undefined, sentimentEvidence: "", positiveEvaluationCount: 0, negativeEvaluationCount: 0,
+      accuracy: "待确认", accuracyScore: undefined, accuracyEvidence: "",
+      analysisConclusion: "回答明确提及了检测对象。", factClaims: [],
+      rankedBrands: [], reputationTopics: [], citations: source?.citations || [], analysisModel,
+    };
+  }) };
 }
